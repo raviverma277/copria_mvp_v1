@@ -1,0 +1,114 @@
+{
+  "notes": "ACME US Portfolio — multiple locations across the US with varied hazards.",
+  "sov": {
+    "records": [
+      {
+        "location_id": "NYC-OFF-1",
+        "address": "350 5th Ave, New York, NY",
+        "occupancy": "Office",
+        "construction": "RCC",
+        "number_of_stories": 60,
+        "sprinklered": true,
+        "fire_alarm": true,
+        "flood_zone": "Zone X",
+        "wildfire_risk": "Low",
+        "earthquake_exposure": "Low",
+        "roof_age_years": 8,
+        "hazardous_materials": false,
+        "tiv_building": 95000000,
+        "tiv_contents": 15000000
+      },
+      {
+        "location_id": "LA-WH-1",
+        "address": "1000 E 7th St, Los Angeles, CA",
+        "occupancy": "Warehouse – General Merchandise",
+        "construction": "Steel frame",
+        "number_of_stories": 1,
+        "sprinklered": false,
+        "fire_alarm": false,
+        "flood_zone": "Zone X",
+        "wildfire_risk": "Moderate",
+        "earthquake_exposure": "Moderate",
+        "roof_age_years": 12,
+        "hazardous_materials": false,
+        "tiv_building": 8000000,
+        "tiv_contents": 4200000
+      },
+      {
+        "location_id": "MIA-WH-2",
+        "address": "7500 NW 25th St, Miami, FL",
+        "occupancy": "Warehouse – Food Storage",
+        "construction": "Tilt-up concrete",
+        "number_of_stories": 1,
+        "sprinklered": true,
+        "fire_alarm": true,
+        "flood_zone": "AE",
+        "wildfire_risk": "Low",
+        "earthquake_exposure": "Low",
+        "roof_age_years": 5,
+        "hazardous_materials": false,
+        "tiv_building": 6000000,
+        "tiv_contents": 3000000
+      },
+      {
+        "location_id": "SAC-PLANT-3",
+        "address": "5900 Warehouse Way, Sacramento, CA",
+        "occupancy": "Manufacturing – Wood Products",
+        "construction": "Metal with wood interior",
+        "number_of_stories": 2,
+        "sprinklered": true,
+        "fire_alarm": false,
+        "flood_zone": "Zone X",
+        "wildfire_risk": "High",
+        "earthquake_exposure": "Low",
+        "roof_age_years": 22,
+        "hazardous_materials": true,
+        "tiv_building": 9000000,
+        "tiv_contents": 2500000
+      },
+      {
+        "location_id": "SF-WH-4",
+        "address": "2000 3rd St, San Francisco, CA",
+        "occupancy": "Warehouse – Electronics",
+        "construction": "RCC",
+        "number_of_stories": 3,
+        "sprinklered": true,
+        "fire_alarm": true,
+        "flood_zone": "Zone X",
+        "wildfire_risk": "Low",
+        "earthquake_exposure": "High",
+        "roof_age_years": 16,
+        "hazardous_materials": false,
+        "tiv_building": 7000000,
+        "tiv_contents": 5500000
+      }
+    ]
+  },
+  "loss_run": {
+    "records": [
+      {
+        "policy_year": 2024,
+        "claim_number": "LA-24-THF-01",
+        "loss_date": "2024-04-18",
+        "cause": "Theft",
+        "location_id": "LA-WH-1",
+        "status": "Open",
+        "paid": 50000,
+        "open_reserve": 120000,
+        "incurred": 170000
+      },
+      {
+        "policy_year": 2023,
+        "claim_number": "MIA-23-FLD-02",
+        "loss_date": "2023-09-15",
+        "cause": "Flood",
+        "location_id": "MIA-WH-2",
+        "status": "Closed",
+        "paid": 180000,
+        "open_reserve": 0,
+        "incurred": 180000
+      }
+    ]
+  },
+  "attachments": []
+}

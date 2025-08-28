@@ -1,0 +1,20 @@
+
+{
+  "pricing": {
+    "base_rate_per_100": 0.25
+  },
+  "risk": {
+    "weights": {
+      "construction": 0.25,
+      "occupancy": 0.2,
+      "protection": 0.25,
+      "exposure": 0.2,
+      "loss_history": 0.1
+    }
+  },
+  "ingestion": {
+    "source": "local",
+    "events_path": "data/events.jsonl",
+    "cytora_sample_path": "data/sample_cytora_bundle.json"
+  }
+}

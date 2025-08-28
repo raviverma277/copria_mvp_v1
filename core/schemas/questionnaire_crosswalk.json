@@ -1,0 +1,15 @@
+{
+    "sprinkler system": "sprinkler_system",
+    "automatic sprinklers": "sprinkler_system",
+    "fire alarm": "fire_alarm",
+    "intruder alarm": "intruder_alarm",
+    "distance to hydrant m": "distance_to_hydrant_m",
+    "hydrant distance": "distance_to_hydrant_m",
+    "roof condition": "roof_condition",
+    "hot work permit": "hot_work_permit",
+    "security cameras": "security_cameras",
+    "24 7 occupancy": "twentyfour_seven_occupancy",
+    "flood defenses": "flood_defenses",
+    "business continuity plan": "bcp_present"
+  }
+  

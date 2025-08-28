@@ -1,0 +1,32 @@
+{
+  "sov": [
+    {
+      "doc_type": "sov",
+      "mappings": [],
+      "new_fields": [
+        {
+          "field_name": "heritage_status",
+          "description": "Indicates if the building has heritage status.",
+          "example": "True"
+        },
+        {
+          "field_name": "postcode",
+          "description": "Suggested new field (invalid mapping). Direct mapping to postal code.",
+          "example": null
+        },
+        {
+          "field_name": "sprinkler",
+          "description": "Suggested new field (invalid mapping). Mapping based on sprinkler presence.",
+          "example": null
+        }
+      ]
+    }
+  ],
+  "loss_run": [
+    {
+      "doc_type": "loss_run",
+      "mappings": [],
+      "new_fields": []
+    }
+  ]
+}

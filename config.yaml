@@ -1,0 +1,2 @@
+use_llm_miner: true
+llm_miner_model: gpt-4o-mini

@@ -1,0 +1,85 @@
+{
+  "type": "object",
+  "properties": {
+    "gross_paid": {
+      "type": "number",
+      "description": "Total amount paid for the claim.",
+      "examples": [
+        180000.0,
+        170000.0,
+        90000.0
+      ],
+      "minimum": 0
+    },
+    "cause": {
+      "type": "string",
+      "description": "The reason for the loss.",
+      "examples": [
+        "Water damage (sprinkler leak)",
+        "Theft",
+        "Storm – roof damage"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "description": "Current status of the claim.",
+      "examples": [
+        "CLOSED",
+        "OPEN"
+      ],
+      "enum": [
+        "OPEN",
+        "CLOSED",
+        "UNKNOWN"
+      ]
+    },
+    "date_of_loss": {
+      "type": "string",
+      "format": "date",
+      "description": "The date when the loss occurred.",
+      "examples": [
+        "2024-03-18",
+        "2023-07-02",
+        "2022-11-12"
+      ]
+    },
+    "claim_number": {
+      "type": "string",
+      "description": "Unique identifier for the claim.",
+      "examples": [
+        "ACM-24-001",
+        "ACM-23-014",
+        "ACM-22-008"
+      ]
+    },
+    "location_id": {
+      "type": "string",
+      "description": "Identifier for the location related to the claim.",
+      "examples": [
+        "WH-A",
+        "WH-B"
+      ]
+    },
+    "policy_year": {
+      "type": "integer",
+      "description": "The policy year associated with the claim.",
+      "examples": [
+        2024,
+        2023,
+        2022
+      ]
+    },
+    "open_reserve": {
+      "type": "integer",
+      "description": "The reserve amount set for the claim.",
+      "examples": [
+        0,
+        120000
+      ]
+    }
+  },
+  "required": [
+    "date_of_loss",
+    "cause"
+  ]
+}

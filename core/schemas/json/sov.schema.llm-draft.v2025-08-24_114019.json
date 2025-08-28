@@ -1,0 +1,185 @@
+{
+  "type": "object",
+  "properties": {
+    "city": {
+      "type": "string",
+      "description": "The name of the city.",
+      "examples": [
+        "London",
+        "Leeds"
+      ]
+    },
+    "earthquake_zone": {
+      "type": "string",
+      "description": "The seismic zone classification.",
+      "examples": [
+        "Zone 3",
+        "Zone 2"
+      ]
+    },
+    "country": {
+      "type": "string",
+      "description": "The country code.",
+      "examples": [
+        "GB"
+      ],
+      "pattern": "^[A-Z]{2}$"
+    },
+    "postal_code": {
+      "type": "string",
+      "description": "The postal code of the location.",
+      "examples": [
+        "EC2A 2BB",
+        "LS1 4AB"
+      ]
+    },
+    "tiv_content": {
+      "type": "number",
+      "description": "Total insured value of content.",
+      "examples": [
+        1500000.0,
+        800000.0
+      ],
+      "minimum": 0
+    },
+    "year_built": {
+      "type": "integer",
+      "description": "The year the building was constructed.",
+      "examples": [
+        1963,
+        2010
+      ]
+    },
+    "alarm": {
+      "type": "boolean",
+      "description": "Indicates if an alarm system is present.",
+      "examples": [
+        true
+      ]
+    },
+    "lng": {
+      "type": "number",
+      "description": "Longitude of the location.",
+      "examples": [
+        -0.09,
+        -1.549
+      ],
+      "minimum": -180,
+      "maximum": 180
+    },
+    "tiv_building": {
+      "type": "number",
+      "description": "Total insured value of the building.",
+      "examples": [
+        5000000.0,
+        3200000.0
+      ],
+      "minimum": 0
+    },
+    "sprinklers": {
+      "type": "boolean",
+      "description": "Indicates if sprinklers are installed.",
+      "examples": [
+        true,
+        false
+      ]
+    },
+    "tiv_bi": {
+      "type": "number",
+      "description": "Total insured value of business interruption.",
+      "examples": [
+        2000000.0,
+        1000000.0
+      ],
+      "minimum": 0
+    },
+    "roof_age_years": {
+      "type": "integer",
+      "description": "Age of the roof in years.",
+      "examples": [
+        22,
+        8
+      ],
+      "minimum": 0
+    },
+    "occupancy": {
+      "type": "string",
+      "description": "Type of occupancy of the building.",
+      "examples": [
+        "Warehousing",
+        "Manufacturing"
+      ]
+    },
+    "construction": {
+      "type": "string",
+      "description": "Type of construction material used.",
+      "examples": [
+        "Masonry",
+        "Steel"
+      ]
+    },
+    "lat": {
+      "type": "number",
+      "description": "Latitude of the location.",
+      "examples": [
+        51.515,
+        53.799
+      ],
+      "minimum": -90,
+      "maximum": 90
+    },
+    "address": {
+      "type": "string",
+      "description": "The street address of the location.",
+      "examples": [
+        "1 High Street",
+        "100 River Road"
+      ]
+    },
+    "building_condition": {
+      "type": "string",
+      "description": "Condition of the building.",
+      "examples": [
+        "Excellent",
+        "Needs Renovation"
+      ]
+    },
+    "flood_score": {
+      "type": "number",
+      "description": "Flood risk score for the location.",
+      "examples": [
+        7.4,
+        3.2
+      ]
+    },
+    "location_id": {
+      "type": "string",
+      "description": "Unique identifier for the location.",
+      "examples": [
+        "L-001",
+        "L-002"
+      ]
+    },
+    "heritage_status": {
+      "type": "boolean",
+      "description": "Indicates provisional heritage status.",
+      "examples": [
+        true,
+        false
+      ]
+    },
+    "fire_station_distance_km": {
+      "type": "number",
+      "description": "Distance to the nearest fire station in kilometers.",
+      "examples": [
+        1.2,
+        5.5
+      ]
+    }
+  },
+  "required": [
+    "address",
+    "country",
+    "tiv_building"
+  ]
+}

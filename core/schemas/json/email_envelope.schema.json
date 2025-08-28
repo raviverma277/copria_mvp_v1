@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/lloyds/email_envelope.schema.json",
+  "title": "EmailEnvelope",
+  "type": "object",
+  "description": "Email metadata schema for broker-submitted packs.",
+  "properties": {
+    "email_id": {
+      "type": "string",
+      "description": "Internal email identifier."
+    },
+    "from": {
+      "type": "string",
+      "description": "Sender email address."
+    },
+    "to": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Recipient emails."
+    },
+    "cc": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "CC emails."
+    },
+    "sent_date": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC3339 timestamp."
+    },
+    "subject": {
+      "type": "string",
+      "description": "Email subject line."
+    },
+    "body_text": {
+      "type": "string",
+      "description": "Plain-text email body."
+    },
+    "attachments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "file_id": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "doc_type": {
+            "type": "string",
+            "enum": [
+              "submission",
+              "sov",
+              "loss_run",
+              "other"
+            ]
+          }
+        },
+        "required": [
+          "filename",
+          "doc_type"
+        ]
+      }
+    }
+  },
+  "required": [
+    "from",
+    "to",
+    "sent_date",
+    "subject"
+  ]
+}

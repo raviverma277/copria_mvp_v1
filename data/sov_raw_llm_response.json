@@ -1,0 +1,96 @@
+{
+  "doc_type": "sov",
+  "mappings": [
+    {
+      "source_header": "Build Type",
+      "target_field": "construction",
+      "confidence": 1,
+      "rationale": "Direct mapping to construction type."
+    },
+    {
+      "source_header": "Address",
+      "target_field": "address",
+      "confidence": 1,
+      "rationale": "Direct mapping to address."
+    },
+    {
+      "source_header": "City",
+      "target_field": "city",
+      "confidence": 1,
+      "rationale": "Direct mapping to city."
+    },
+    {
+      "source_header": "PostCode",
+      "target_field": "postal_code",
+      "confidence": 1,
+      "rationale": "Direct mapping to postal code."
+    },
+    {
+      "source_header": "Country",
+      "target_field": "country",
+      "confidence": 1,
+      "rationale": "Direct mapping to country."
+    },
+    {
+      "source_header": "Occupancy",
+      "target_field": "occupancy",
+      "confidence": 1,
+      "rationale": "Direct mapping to occupancy."
+    },
+    {
+      "source_header": "Year Built",
+      "target_field": "year_built",
+      "confidence": 1,
+      "rationale": "Direct mapping to year built."
+    },
+    {
+      "source_header": "Sprinkler?",
+      "target_field": "sprinklers",
+      "confidence": 0.8,
+      "rationale": "Mapping based on sprinkler presence."
+    },
+    {
+      "source_header": "Alarm",
+      "target_field": "alarm",
+      "confidence": 1,
+      "rationale": "Direct mapping to alarm presence."
+    },
+    {
+      "source_header": "Earthquake Zone",
+      "target_field": "earthquake_zone",
+      "confidence": 0.9,
+      "rationale": "Mapping based on earthquake zone classification."
+    },
+    {
+      "source_header": "Flood Score",
+      "target_field": "flood_score",
+      "confidence": 0.9,
+      "rationale": "Mapping based on flood risk score."
+    },
+    {
+      "source_header": "Roof Age (years)",
+      "target_field": "roof_age_years",
+      "confidence": 1,
+      "rationale": "Direct mapping to roof age."
+    },
+    {
+      "source_header": "Fire Station Distance (km)",
+      "target_field": "fire_station_distance_km",
+      "confidence": 1,
+      "rationale": "Direct mapping to fire station distance."
+    },
+    {
+      "source_header": "Building Condition",
+      "target_field": "building_condition",
+      "confidence": 1,
+      "rationale": "Direct mapping to building condition."
+    }
+  ],
+  "new_fields": [
+    {
+      "field_name": "heritage_status",
+      "description": "Indicates if the building has heritage status.",
+      "example": "True"
+    }
+  ]
+}

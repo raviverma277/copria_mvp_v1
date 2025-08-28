@@ -1,0 +1,18 @@
+{
+  "doc_type": "loss_run",
+  "mappings": [
+    {
+      "source_header": "Close Date",
+      "target_field": "reported_date",
+      "confidence": 0.8,
+      "rationale": "Close Date is closely related to the date a claim is reported, as it indicates when the claim process was completed."
+    },
+    {
+      "source_header": "Claim Id",
+      "target_field": "claim_reference",
+      "confidence": 0.9,
+      "rationale": "Claim Id directly corresponds to the unique identifier for the claim, which is represented as claim_reference in the schema."
+    }
+  ],
+  "new_fields": []
+}

@@ -1,0 +1,62 @@
+[
+  {
+    "category": "Fire Protection",
+    "field": "Sprinkler System (Y/N)",
+    "condition": "== 'No'",
+    "description": "No sprinkler protection"
+  },
+  {
+    "category": "Fire Protection",
+    "field": "Fire Alarm (Y/N)",
+    "condition": "== 'No'",
+    "description": "No fire alarm installed"
+  },
+  {
+    "category": "Natural Hazard",
+    "field": "Flood Zone (e.g., Zone X, AE)",
+    "condition": "contains 'AE' or 'VE' or 'A'",
+    "description": "Located in high-risk flood zone"
+  },
+  {
+    "category": "Natural Hazard",
+    "field": "Wildfire Risk (Low/Moderate/High or ISO Class)",
+    "condition": "== 'High'",
+    "description": "High wildfire exposure"
+  },
+  {
+    "category": "Natural Hazard",
+    "field": "Earthquake Exposure (Low/Moderate/High or ShakeMap Zone)",
+    "condition": "== 'High'",
+    "description": "High earthquake exposure"
+  },
+  {
+    "category": "Property Age",
+    "field": "Roof > 20 yrs",
+    "condition": "== 'Yes'",
+    "description": "Roof is older than 20 years"
+  },
+  {
+    "category": "Building Details",
+    "field": "Number of Stories",
+    "condition": "> 3",
+    "description": "Building has more than 3 stories"
+  },
+  {
+    "category": "Occupancy",
+    "field": "Hazardous Materials (Y/N)",
+    "condition": "== 'Yes'",
+    "description": "Hazardous materials present on site"
+  },
+  {
+    "category": "Loss History",
+    "field": "Prior Claims (Y/N) and Total Loss Amount",
+    "condition": "Prior Claims == 'Yes' and Total Loss Amount > 100000",
+    "description": "Prior significant claims"
+  },
+  {
+    "category": "Size & Exposure",
+    "field": "Total TIV and Sprinkler System",
+    "condition": "Total TIV > 10000000 and Sprinkler System == 'No'",
+    "description": "High value property without sprinkler protection"
+  }
+]

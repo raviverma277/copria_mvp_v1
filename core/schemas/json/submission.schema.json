@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/lloyds/submission.schema.json",
+  "title": "LloydsSubmission",
+  "type": "object",
+  "description": "Lloyd\u2019s-aligned submission core details for Property (MRC-style header fields).",
+  "properties": {
+    "umr": {
+      "type": "string",
+      "description": "Unique Market Reference, e.g., B1234ABCDEF.",
+      "pattern": "^[A-Z0-9\\-]{6,}$"
+    },
+    "broker_reference": {
+      "type": "string",
+      "description": "Broker internal reference for the slip."
+    },
+    "slip_version": {
+      "type": "string",
+      "description": "Slip version or date string."
+    },
+    "insured_name": {
+      "type": "string",
+      "description": "Named insured / client name."
+    },
+    "effective_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Policy inception date (YYYY-MM-DD)."
+    },
+    "expiry_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Policy expiry date (YYYY-MM-DD)."
+    },
+    "currency": {
+      "type": "string",
+      "description": "Transaction currency (ISO 4217).",
+      "pattern": "^[A-Z]{3}$",
+      "examples": [
+        "GBP",
+        "USD",
+        "EUR"
+      ]
+    },
+    "total_tiv": {
+      "type": "number",
+      "description": "Total insured values for the schedule (building + contents + BI)."
+    },
+    "number_of_locations": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Count of distinct risk locations in SOV."
+    },
+    "primary_class": {
+      "type": "string",
+      "description": "Class of Business",
+      "enum": [
+        "PROPERTY"
+      ]
+    },
+    "cob_detailed": {
+      "type": "string",
+      "description": "Detailed COB if provided, e.g., 'Property D&F', 'IAR'."
+    },
+    "broker_name": {
+      "type": "string",
+      "description": "Producing broker firm name."
+    },
+    "broker_contact": {
+      "type": "string",
+      "description": "Primary broker contact details (name/email/phone textual)."
+    },
+    "territory_code": {
+      "type": "string",
+      "description": "ISO 3166-1 alpha-2 for territory of risk, where applicable.",
+      "pattern": "^[A-Z]{2}$"
+    },
+    "risk_code": {
+      "type": "string",
+      "description": "Lloyd\u2019s risk code if provided."
+    },
+    "layer_limit": {
+      "type": "number",
+      "description": "Layer limit amount in policy currency."
+    },
+    "deductible": {
+      "type": "number",
+      "description": "All-perils deductible or main peril deductible in policy currency."
+    },
+    "premium_basis": {
+      "type": "string",
+      "description": "Basis: per location / flat premium / other.",
+      "enum": [
+        "PER_LOCATION",
+        "FLAT",
+        "OTHER"
+      ]
+    }
+  },
+  "required": [
+    "insured_name",
+    "effective_date",
+    "currency"
+  ],
+  "additionalProperties": true
+}

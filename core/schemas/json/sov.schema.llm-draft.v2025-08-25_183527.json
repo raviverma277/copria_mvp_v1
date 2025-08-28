@@ -1,0 +1,108 @@
+{
+  "type": "object",
+  "properties": {
+    "year_built": {
+      "type": "integer",
+      "description": "The year the building was constructed.",
+      "examples": [
+        2016,
+        2019,
+        2012
+      ]
+    },
+    "address": {
+      "type": "string",
+      "description": "The physical address of the property.",
+      "examples": [
+        "12 Dock Rd, Pune, MH",
+        "Plot 44, Industrial Estate, Bangalore, KA",
+        "9 Residency Rd, Bangalore, KA"
+      ]
+    },
+    "construction": {
+      "type": "string",
+      "description": "The type of construction used for the building.",
+      "examples": [
+        "RCC",
+        "Steel frame with sheet roofing"
+      ]
+    },
+    "tiv_bi": {
+      "type": "number",
+      "description": "The total insured value for business interruption.",
+      "examples": [
+        30.0,
+        45.0
+      ],
+      "minimum": 0
+    },
+    "sprinklers": {
+      "type": "boolean",
+      "description": "Indicates if the building has a sprinkler system.",
+      "examples": [
+        true,
+        false
+      ]
+    },
+    "location_id": {
+      "type": "string",
+      "description": "A unique identifier for the location.",
+      "examples": [
+        "WH-A",
+        "WH-B",
+        "OFF-1"
+      ]
+    },
+    "occupancy": {
+      "type": "string",
+      "description": "The type of occupancy of the building.",
+      "examples": [
+        "Warehouse – General Merchandise",
+        "Warehouse – Electronics",
+        "Office"
+      ]
+    },
+    "tiv_building": {
+      "type": "number",
+      "description": "The total insured value of the building.",
+      "examples": [
+        9500000.0,
+        7200000.0,
+        5100000.0
+      ],
+      "minimum": 0
+    },
+    "tiv_content": {
+      "type": "number",
+      "description": "The total insured value of the contents.",
+      "examples": [
+        2500000.0,
+        4300000.0,
+        1200000.0
+      ],
+      "minimum": 0
+    },
+    "area_sqft": {
+      "type": "integer",
+      "description": "The total area of the building in square feet.",
+      "examples": [
+        85000,
+        60000,
+        32000
+      ]
+    },
+    "number_of_stories": {
+      "type": "integer",
+      "description": "The provisional number of stories in the building.",
+      "examples": [
+        3,
+        2,
+        8
+      ]
+    }
+  },
+  "required": [
+    "address",
+    "tiv_building"
+  ]
+}

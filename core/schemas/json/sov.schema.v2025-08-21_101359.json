@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/lloyds/sov.schema.json",
+  "title": "LloydsSOV",
+  "type": "array",
+  "description": "Schedule of Values rows for Property.",
+  "items": {
+    "type": "object",
+    "properties": {
+      "location_id": {
+        "type": "string",
+        "description": "Internal location identifier (row key) for linkage."
+      },
+      "address": {
+        "type": "string",
+        "description": "Full street address as provided."
+      },
+      "city": {
+        "type": "string",
+        "description": "City / town."
+      },
+      "state_province": {
+        "type": "string",
+        "description": "State/Province/Region text as provided."
+      },
+      "postal_code": {
+        "type": "string",
+        "description": "Postal/ZIP code."
+      },
+      "country": {
+        "type": "string",
+        "description": "ISO 3166-1 alpha-2 country code.",
+        "pattern": "^[A-Z]{2}$",
+        "examples": [
+          "GB",
+          "US",
+          "IN"
+        ]
+      },
+      "lat": {
+        "type": "number",
+        "description": "Latitude if geocoded."
+      },
+      "lng": {
+        "type": "number",
+        "description": "Longitude if geocoded."
+      },
+      "occupancy": {
+        "type": "string",
+        "description": "Occupancy description (e.g., Office, Warehouse, Manufacturing)."
+      },
+      "construction": {
+        "type": "string",
+        "description": "Construction class or description (e.g., ISO class, Masonry, Timber)."
+      },
+      "year_built": {
+        "type": "integer",
+        "minimum": 1800,
+        "maximum": 2100,
+        "description": "Original year built."
+      },
+      "stories": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Number of stories / floors."
+      },
+      "roof_type": {
+        "type": "string",
+        "description": "Roof type/material if available."
+      },
+      "sprinklers": {
+        "type": "boolean",
+        "description": "Automatic sprinkler protection present?"
+      },
+      "alarm": {
+        "type": "boolean",
+        "description": "Intruder alarm present?"
+      },
+      "tiv_building": {
+        "type": "number",
+        "description": "Building value."
+      },
+      "tiv_content": {
+        "type": "number",
+        "description": "Contents/Machinery value."
+      },
+      "tiv_bi": {
+        "type": "number",
+        "description": "Business Interruption value or annual BI sum."
+      },
+      "bi_indemnity_period_months": {
+        "type": "integer",
+        "description": "Business interruption indemnity period (months)."
+      },
+      "notes": {
+        "type": "string",
+        "description": "Free-text notes copied from SOV."
+      },
+      "earthquake_zone": {
+        "type": "string",
+        "description": "Zone classification for earthquake risk.",
+        "examples": [
+          "Zone 3"
+        ]
+      },
+      "flood_score": {
+        "type": "string",
+        "description": "Score indicating the flood risk associated with the location.",
+        "examples": [
+          "7.4"
+        ]
+      },
+      "roof_age_years": {
+        "type": "integer",
+        "examples": [
+          22
+        ],
+        "minimum": 8.0,
+        "maximum": 22.0
+      },
+      "building_condition": {
+        "type": "string",
+        "examples": [
+          "Excellent "
+        ],
+        "maxLength": 16,
+        "enum": [
+          "Excellent ",
+          "Needs Renovation"
+        ]
+      },
+      "fire_station_distance_km": {
+        "type": "string",
+        "title": "Fire Station Distance Km"
+      }      
+    },
+    "required": [
+      "address",
+      "country",
+      "tiv_building"
+    ]
+  }
+}

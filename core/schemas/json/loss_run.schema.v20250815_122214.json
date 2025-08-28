@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/lloyds/loss_run.schema.json",
+  "title": "LloydsLossRun",
+  "type": "array",
+  "description": "Loss run records aligned to Lloyd’s conventions.",
+  "items": {
+    "type": "object",
+    "properties": {
+      "policy_number": {
+        "type": "string",
+        "description": "Policy number or reference if provided."
+      },
+      "date_of_loss": {
+        "type": "string",
+        "format": "date",
+        "description": "YYYY-MM-DD."
+      },
+      "cause": {
+        "type": "string",
+        "description": "Cause of loss / peril."
+      },
+      "cat_indicator": {
+        "type": "boolean",
+        "description": "Whether loss is catastrophe-related (if indicated)."
+      },
+      "gross_paid": {
+        "type": "number",
+        "description": "Gross paid amount."
+      },
+      "gross_outstanding": {
+        "type": "number",
+        "description": "Gross outstanding reserve."
+      },
+      "net_paid": {
+        "type": "number",
+        "description": "Net paid after recoveries."
+      },
+      "net_outstanding": {
+        "type": "number",
+        "description": "Net outstanding after recoveries."
+      },
+      "status": {
+        "type": "string",
+        "description": "Open/Closed if indicated.",
+        "enum": [
+          "OPEN",
+          "CLOSED",
+          "UNKNOWN"
+        ]
+      },
+      "adjuster_notes": {
+        "type": "string",
+        "description": "Suggested new field (low-confidence mapping 0.50). Adjuster Notes may indicate the status of the claim, but it's not a direct mapping."
+      }
+    },
+    "required": [
+      "date_of_loss",
+      "cause"
+    ]
+  }
+}

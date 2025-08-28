@@ -1,0 +1,181 @@
+{
+  "submission": [
+    {
+      "type": "pdf",
+      "pages_text": [
+        "MARKET REFORM CONTRACT (MRC) - PROPERTY\nUMR: B1234ABCD567\nInsured Name: ACME MANUFACTURING LTD\nBroker Reference: BR-2025-001\nPeriod of Insurance: Effective Date 2025-10-01 to Expiry Date 2026-09-30\nCurrency: GBP\nCoverholder: Sample Broker LLP\nNotes: See attached Schedule of Values and Loss Runs.\n",
+        "SCHEDULE OF VALUES (SOV) SUMMARY\nTotal Insured Value (TIV): 50,000,000\nConstruction: Mixed (Masonry / Steel)\nOccupancy: Warehousing / Light Manufacturing\nSprinklers: Mixed coverage\n",
+        "LOSS RUN SUMMARY (Last 5 years)\nDate of Loss | Cause of Loss | Gross Paid | Gross Outstanding | Status\n2024-05-12   | Fire          | 900,000    | 0                 | CLOSED\n2023-08-21   | Windstorm     | 120,000    | 0                 | CLOSED\n"
+      ],
+      "text": "MARKET REFORM CONTRACT (MRC) - PROPERTY\nUMR: B1234ABCD567\nInsured Name: ACME MANUFACTURING LTD\nBroker Reference: BR-2025-001\nPeriod of Insurance: Effective Date 2025-10-01 to Expiry Date 2026-09-30\nCurrency: GBP\nCoverholder: Sample Broker LLP\nNotes: See attached Schedule of Values and Loss Runs.\n\nSCHEDULE OF VALUES (SOV) SUMMARY\nTotal Insured Value (TIV): 50,000,000\nConstruction: Mixed (Masonry / Steel)\nOccupancy: Warehousing / Light Manufacturing\nSprinklers: Mixed coverage\n\nLOSS RUN SUMMARY (Last 5 years)\nDate of Loss | Cause of Loss | Gross Paid | Gross Outstanding | Status\n2024-05-12   | Fire          | 900,000    | 0                 | CLOSED\n2023-08-21   | Windstorm     | 120,000    | 0                 | CLOSED",
+      "meta": {
+        "title": "",
+        "author": "",
+        "subject": "",
+        "creator": "",
+        "producer": "",
+        "creation_date": "",
+        "modification_date": "",
+        "page_count": 3
+      },
+      "filename": "data\\submission_pack.pdf",
+      "page_tags": [
+        {
+          "page": 0,
+          "type": "submission",
+          "confidence": 1.0
+        },
+        {
+          "page": 1,
+          "type": "sov",
+          "confidence": 1.0
+        },
+        {
+          "page": 2,
+          "type": "loss_run",
+          "confidence": 1.0
+        }
+      ]
+    }
+  ],
+  "sov": [
+    {
+      "type": "excel",
+      "sheets": [
+        {
+          "name": "SOV",
+          "headers": [
+            "Location",
+            "Address",
+            "City",
+            "PostCode",
+            "Country",
+            "Construction Type",
+            "Occupancy",
+            "Year Built",
+            "Bldg Value",
+            "Contents",
+            "BI Sum Insured",
+            "Sprinkler?",
+            "Alarm"
+          ],
+          "rows": [
+            {
+              "Location": "L-001",
+              "Address": "1 High Street",
+              "City": "London",
+              "PostCode": "EC2A 2BB",
+              "Country": "GB",
+              "Construction Type": "Masonry",
+              "Occupancy": "Warehousing",
+              "Year Built": 1963,
+              "Bldg Value": "\u00a35,000,000",
+              "Contents": "\u00a31,500,000",
+              "BI Sum Insured": "\u00a32,000,000",
+              "Sprinkler?": "No",
+              "Alarm": "Yes"
+            },
+            {
+              "Location": "L-002",
+              "Address": "100 River Road",
+              "City": "Leeds",
+              "PostCode": "LS1 4AB",
+              "Country": "GB",
+              "Construction Type": "Steel",
+              "Occupancy": "Manufacturing",
+              "Year Built": 2010,
+              "Bldg Value": "\u00a33,200,000",
+              "Contents": "\u00a3800,000",
+              "BI Sum Insured": "\u00a31,000,000",
+              "Sprinkler?": "Yes",
+              "Alarm": "Yes"
+            }
+          ]
+        }
+      ],
+      "filename": "data\\sov.xlsx"
+    }
+  ],
+  "loss_run": [
+    {
+      "type": "excel",
+      "sheets": [
+        {
+          "name": "Losses",
+          "headers": [
+            "Policy Number",
+            "Date of Loss",
+            "Cause of Loss",
+            "Gross Paid",
+            "Gross Outstanding",
+            "Status"
+          ],
+          "rows": [
+            {
+              "Policy Number": "POL123",
+              "Date of Loss": "2024-05-12",
+              "Cause of Loss": "Fire",
+              "Gross Paid": 900000,
+              "Gross Outstanding": 0,
+              "Status": "Closed"
+            },
+            {
+              "Policy Number": "POL123",
+              "Date of Loss": "2023-08-21",
+              "Cause of Loss": "Windstorm",
+              "Gross Paid": 120000,
+              "Gross Outstanding": 0,
+              "Status": "Closed"
+            }
+          ]
+        }
+      ],
+      "filename": "data\\loss_run.xlsx"
+    }
+  ],
+  "questionnaire": [],
+  "email_body": [
+    {
+      "type": "email",
+      "headers": {
+        "from": "broker@example.com",
+        "to": "underwriter@lloyds-syndicate.example.com",
+        "cc": "assistant.broker@example.com",
+        "subject": "Property D&F Submission - ACME Manufacturing LTD (UMR B1234ABCD567)",
+        "date": "Sat, 09 Aug 2025 13:30:36 +0000",
+        "message-id": "<175474623655.11.2095992167134916216@ad15aab5ef81>",
+        "mime-version": "1.0",
+        "content-type": "multipart/mixed; boundary=\"===============4458504422061465078==\""
+      },
+      "body": {
+        "text": "Hello Team,\n\nPlease find attached the Property D&F submission pack for ACME Manufacturing LTD.\n- MRC submission (PDF) with UMR B1234ABCD567\n- Schedule of Values (Excel)\n- Loss Run (Excel)\n\nRegards,\nSample Broker LLP\n",
+        "html": ""
+      },
+      "attachments": [
+        {
+          "filename": "submission_pack.pdf",
+          "content_type": "application/pdf",
+          "size": 2182,
+          "content_id": "",
+          "content_disposition": "attachment; filename=\"submission_pack.pdf\""
+        },
+        {
+          "filename": "sov.xlsx",
+          "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "size": 5812,
+          "content_id": "",
+          "content_disposition": "attachment; filename=\"sov.xlsx\""
+        },
+        {
+          "filename": "loss_run.xlsx",
+          "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "size": 5566,
+          "content_id": "",
+          "content_disposition": "attachment; filename=\"loss_run.xlsx\""
+        }
+      ],
+      "filename": "data\\broker_email.eml"
+    }
+  ],
+  "other": []
+}

@@ -1,0 +1,123 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "description": "The current status of the claim.",
+      "examples": [
+        "CLOSED"
+      ],
+      "enum": [
+        "OPEN",
+        "CLOSED",
+        "UNKNOWN"
+      ]
+    },
+    "close_date": {
+      "type": "string",
+      "format": "date-time",
+      "description": "The date when the claim was closed.",
+      "examples": [
+        "2024-06-01T00:00:00",
+        "2023-09-05T00:00:00"
+      ]
+    },
+    "gross_outstanding": {
+      "type": "number",
+      "description": "The total outstanding amount for the claim.",
+      "examples": [
+        0.0
+      ],
+      "minimum": 0
+    },
+    "gross_paid": {
+      "type": "number",
+      "description": "The total amount paid for the claim.",
+      "examples": [
+        900000.0,
+        120000.0
+      ],
+      "minimum": 0
+    },
+    "policy_number": {
+      "type": "string",
+      "description": "The insurance policy number associated with the claim.",
+      "examples": [
+        "POL123"
+      ]
+    },
+    "reported_date": {
+      "type": "string",
+      "format": "date-time",
+      "description": "The date when the claim was reported.",
+      "examples": [
+        "2024-05-13T00:00:00",
+        "2023-08-22T00:00:00"
+      ]
+    },
+    "cause": {
+      "type": "string",
+      "description": "The cause of the loss.",
+      "examples": [
+        "Fire",
+        "Windstorm"
+      ]
+    },
+    "date_of_loss": {
+      "type": "string",
+      "format": "date",
+      "description": "The date when the loss occurred.",
+      "examples": [
+        "2024-05-12",
+        "2023-08-21"
+      ]
+    },
+    "adjuster_notes": {
+      "type": "string",
+      "description": "Notes from the adjuster regarding the claim.",
+      "examples": [
+        "Pending third-party report",
+        "Resolved, payment sent"
+      ]
+    },
+    "reopened_flag": {
+      "type": "boolean",
+      "description": "Indicates if the claim has been reopened.",
+      "examples": [
+        false
+      ]
+    },
+    "litigation_status": {
+      "type": "string",
+      "description": "The current litigation status of the claim.",
+      "examples": [
+        "Open",
+        "Closed"
+      ],
+      "enum": [
+        "Open",
+        "Closed"
+      ]
+    },
+    "claim_reference": {
+      "type": "string",
+      "description": "A unique reference for the claim.",
+      "examples": [
+        "CLM-001",
+        "CLM-002"
+      ]
+    },
+    "loss_description": {
+      "type": "string",
+      "description": "A description of the loss.",
+      "examples": [
+        "Minor fire in storage area",
+        "Major fire in reception area"
+      ]
+    }
+  },
+  "required": [
+    "date_of_loss",
+    "cause"
+  ]
+}

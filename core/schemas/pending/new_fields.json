@@ -1,0 +1,21 @@
+{
+  "sov": [
+    {
+      "field_name": "earthquake_zone",
+      "description": "Zone classification for earthquake risk.",
+      "example": "Zone 3"
+    }
+  ],
+  "loss_run": [
+    {
+      "field_name": "adjuster_notes",
+      "description": "Suggested new field (low-confidence mapping 0.50). Adjuster Notes may indicate the status of the claim, but it's not a direct mapping.",
+      "example": null
+    },
+    {
+      "field_name": "claim_reference",
+      "description": "Suggested new field (low-confidence mapping 0.50). Claim Reference could be related to the policy number, but it is not a direct match.",
+      "example": null
+    }
+  ]
+}
