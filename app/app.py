@@ -164,6 +164,11 @@ def _filter_new_fields(doc_kind: str, candidates: list[str]) -> list[str]:
 st.set_page_config(page_title="CoPRIA", layout="wide")
 st.title("CoPRIA – Commercial Property Risk Intelligence Agent")
 
+# --- Bridge Streamlit secrets to env ---
+for key in ("OPENAI_API_KEY", "USE_LLM_MINER", "LLM_MINER_MODEL"):
+    if key in st.secrets and st.secrets[key]:
+        os.environ[key] = str(st.secrets[key])
+
 
 state = get_state()
 
