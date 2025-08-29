@@ -15,7 +15,6 @@ from core.parsing.dispatch import parse_files
 from core.extraction.pipeline import run_extraction_pipeline
 from core.risk.pipeline import run_risk_pipeline
 from core.pricing.engine import price_submission
-from core.utils.llm_status import get_llm_status
 from core.schemas.active import get_active_name, active_keys
 from core.schemas.active import active_titles
 from core.extraction.field_mapping import _strip_provisional, PROV_PREFIX
@@ -164,10 +163,48 @@ def _filter_new_fields(doc_kind: str, candidates: list[str]) -> list[str]:
 st.set_page_config(page_title="CoPRIA", layout="wide")
 st.title("CoPRIA – Commercial Property Risk Intelligence Agent")
 
-# --- Bridge Streamlit secrets to env ---
-for key in ("OPENAI_API_KEY", "USE_LLM_MINER", "LLM_MINER_MODEL"):
-    if key in st.secrets and st.secrets[key]:
-        os.environ[key] = str(st.secrets[key])
+def _bridge_streamlit_secrets_to_env(keys=("OPENAI_API_KEY", "USE_LLM_MINER", "LLM_MINER_MODEL")):
+    try:
+        # Accessing st.secrets can raise FileNotFoundError if no secrets.toml exists.
+        secrets = st.secrets
+        for key in keys:
+            val = secrets.get(key, None)
+            if val is not None and val != "":
+                os.environ[key] = str(val)
+    except FileNotFoundError:
+        # No secrets.toml in local dev – that's fine; .env (dotenv) will cover it.
+        pass
+    except Exception as e:
+        # Don't block the app; just log for visibility.
+        print("[secrets->env] Skipped bridging Streamlit secrets:", repr(e))
+
+_bridge_streamlit_secrets_to_env()
+
+# ---- Safe wrapper so missing secrets.toml never shows in the UI ----
+def _safe_llm_status():
+    try:
+        # lazy import so st.secrets is only touched here
+        from core.utils import llm_status as _llm
+        return _llm.get_llm_status()
+    except FileNotFoundError:
+        return {
+            "api_key_set": bool(os.environ.get("OPENAI_API_KEY")),
+            "model": os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+            "last_call": None,
+            "last_duration": None,
+            "last_success": None,
+        }
+    except Exception as e:
+        print("[llm_status] suppressed:", repr(e))
+        return {
+            "api_key_set": bool(os.environ.get("OPENAI_API_KEY")),
+            "model": os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+            "last_call": None,
+            "last_duration": None,
+            "last_success": None,
+        }
+
+
 
 
 state = get_state()
@@ -230,9 +267,8 @@ with st.container(border=True):
 
     # (Optional) API key/quick status pill
     with col3:
-        from core.utils.llm_status import get_llm_status
-        info = get_llm_status()
-        ok = info["api_key_set"]
+        info = _safe_llm_status()
+        ok = info.get("api_key_set", False)
         st.markdown("**LLM Key**")
         st.markdown(
             f"<div style='padding:8px 10px;border-radius:999px;"
@@ -361,7 +397,7 @@ with st.sidebar:
 
     
     st.sidebar.markdown("### 🔍 LLM Status")
-    llm_info = get_llm_status()
+    llm_info = _safe_llm_status()
 
     if llm_info["api_key_set"]:
         st.sidebar.success("API key set")

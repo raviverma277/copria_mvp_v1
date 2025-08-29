@@ -1,5 +1,6 @@
 # core/risk/miner.py
 from __future__ import annotations
+from core.utils.llm_status import record_llm_call_start, record_llm_call_end
 from typing import List, Dict, Any, Set, Optional
 import os, json, re
 from openai import OpenAI
@@ -194,6 +195,7 @@ def mine_additional_risks(
     )
 
     user_payload = json.dumps(prompt, ensure_ascii=False)
+    record_llm_call_start(model)
 
     try:
         print("[LLM-MINER] Calling model (plain JSON)…")
@@ -207,7 +209,9 @@ def mine_additional_risks(
             # Give it more room so the array isn't truncated mid-JSON
             max_output_tokens=900,
         )
+        record_llm_call_end(True)
     except Exception as e:
+        record_llm_call_end(False)
         print("[LLM-MINER] LLM call failed:", repr(e))
         return []
 

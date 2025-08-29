@@ -8,6 +8,7 @@
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations
+from core.utils.llm_status import record_llm_call_start, record_llm_call_end
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, List
 import os, json
@@ -285,7 +286,7 @@ def _llm_property_for_field(doc_type: str, field: str, samples: List[Any]) -> Di
          # or {"type":"object","properties":{}}
         client = OpenAI(api_key=api_key)
         prompt = _render_schema_prompt(doc_type, field, samples or [])
-
+        
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
