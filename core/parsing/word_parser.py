@@ -3,12 +3,15 @@ from typing import Dict, Any, List
 from io import BufferedIOBase
 from docx import Document
 
+
 def _join_clean(lines: List[str]) -> str:
     # Keep line breaks but drop empty-only lines
     return "\n".join([ln.strip() for ln in lines if str(ln).strip()])
 
+
 def _extract_paragraphs(doc: Document) -> str:
     return _join_clean([p.text for p in doc.paragraphs])
+
 
 def _extract_tables(doc: Document) -> List[List[List[str]]]:
     tables: List[List[List[str]]] = []
@@ -18,6 +21,7 @@ def _extract_tables(doc: Document) -> List[List[List[str]]]:
             rows.append([c.text.strip() for c in r.cells])
         tables.append(rows)
     return tables
+
 
 def _extract_headers_footers(doc: Document) -> Dict[str, str]:
     headers: List[str] = []
@@ -39,6 +43,7 @@ def _extract_headers_footers(doc: Document) -> Dict[str, str]:
         "header_text": _join_clean(headers),
         "footer_text": _join_clean(footers),
     }
+
 
 def parse_word(file) -> Dict[str, Any]:
     """

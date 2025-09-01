@@ -1,8 +1,14 @@
 # tests/test_submission_bundle.py
 from core.schemas.contracts import SubmissionBundle, Provenance, IngestSource
 
+
 def test_checksum_and_idempotency():
-    payload = {"sov": {"records": [{"id": 1}]}, "loss_run": None, "notes": "n", "attachments": []}
+    payload = {
+        "sov": {"records": [{"id": 1}]},
+        "loss_run": None,
+        "notes": "n",
+        "attachments": [],
+    }
     prov = Provenance(run_id="abc123", source=IngestSource.LOCAL)
     bundle = SubmissionBundle(provenance=prov, **payload).finalize()
 

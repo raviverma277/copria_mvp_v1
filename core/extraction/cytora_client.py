@@ -5,6 +5,7 @@ from core.schemas.contracts import SubmissionBundle, Provenance, IngestSource
 
 SAMPLE_PATH = os.environ.get("CYTORA_SAMPLE_PATH", "data/sample_cytora_bundle.json")
 
+
 def fetch_latest(run_id: Optional[str] = None) -> SubmissionBundle:
     """
     Temporary stub: reads a sample bundle JSON from disk.

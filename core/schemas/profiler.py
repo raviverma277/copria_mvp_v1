@@ -4,34 +4,51 @@ from typing import Any, Dict, List
 from collections import Counter
 from datetime import date, datetime
 
+
 def _is_floaty(x: Any) -> bool:
-    try: float(x); return True
-    except: return False
+    try:
+        float(x)
+        return True
+    except:
+        return False
+
 
 def _is_inty(x: Any) -> bool:
-    try: return float(x).is_integer()
-    except: return False
+    try:
+        return float(x).is_integer()
+    except:
+        return False
+
 
 def _is_booly(x: Any) -> bool:
     s = str(x).strip().lower()
-    return s in {"true","false","yes","no","y","n","1","0"}
+    return s in {"true", "false", "yes", "no", "y", "n", "1", "0"}
+
 
 def _is_datey(x: Any) -> bool:
-    if isinstance(x, (date, datetime)): return True
+    if isinstance(x, (date, datetime)):
+        return True
     s = str(x)
     for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"):
         try:
             from datetime import datetime as dt
-            dt.strptime(s, fmt); return True
-        except: pass
+
+            dt.strptime(s, fmt)
+            return True
+        except:
+            pass
     return False
 
-def profile_rows(rows: List[Dict[str, Any]], max_enum: int = 12) -> Dict[str, Dict[str, Any]]:
+
+def profile_rows(
+    rows: List[Dict[str, Any]], max_enum: int = 12
+) -> Dict[str, Dict[str, Any]]:
     """
     Returns metrics per field:
       { field: {count, empty, uniques, sample_values, type_guess, min, max, maxLength, enum?, nullable} }
     """
-    if not rows: return {}
+    if not rows:
+        return {}
     fields = set().union(*[r.keys() for r in rows])
     out: Dict[str, Dict[str, Any]] = {}
 
@@ -53,16 +70,19 @@ def profile_rows(rows: List[Dict[str, Any]], max_enum: int = 12) -> Dict[str, Di
 
         # ranges / lengths
         min_v = max_v = None
-        if guess in {"number","integer"}:
+        if guess in {"number", "integer"}:
             try:
                 nums = [float(v) for v in non_empty]
                 min_v, max_v = (min(nums), max(nums)) if nums else (None, None)
-            except: pass
+            except:
+                pass
 
         max_len = None
         if guess == "string":
-            try: max_len = max(len(str(v)) for v in non_empty) if non_empty else 0
-            except: pass
+            try:
+                max_len = max(len(str(v)) for v in non_empty) if non_empty else 0
+            except:
+                pass
 
         enum_vals = None
         if 0 < len(uniques) <= max_enum and guess == "string":
@@ -75,11 +95,13 @@ def profile_rows(rows: List[Dict[str, Any]], max_enum: int = 12) -> Dict[str, Di
             "uniques": len(uniques),
             "sample_values": sample,
             "type_guess": guess,
-            "min": min_v, "max": max_v,
+            "min": min_v,
+            "max": max_v,
             "maxLength": max_len,
             "enum": enum_vals,
         }
     return out
+
 
 def profile_to_suggestions(profile: dict, active_schema) -> dict:
     """
@@ -134,6 +156,3 @@ def profile_to_suggestions(profile: dict, active_schema) -> dict:
         suggestions[field] = suggestion
 
     return suggestions
-
-
-

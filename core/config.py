@@ -6,6 +6,7 @@ DEFAULTS = {
     "llm_miner_model": "gpt-4o-mini",
 }
 
+
 def get_config() -> dict:
     """
     Load config from config.yaml if present, then apply env overrides.
@@ -25,7 +26,11 @@ def get_config() -> dict:
 
     # Env overrides
     if "USE_LLM_MINER" in os.environ:
-        cfg["use_llm_miner"] = os.environ["USE_LLM_MINER"].lower() in {"1","true","yes"}
+        cfg["use_llm_miner"] = os.environ["USE_LLM_MINER"].lower() in {
+            "1",
+            "true",
+            "yes",
+        }
     if "LLM_MINER_MODEL" in os.environ:
         cfg["llm_miner_model"] = os.environ["LLM_MINER_MODEL"]
 

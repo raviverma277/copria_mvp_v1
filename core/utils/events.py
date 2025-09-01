@@ -5,6 +5,7 @@ from typing import Dict, Any
 
 EVENTS_PATH = os.environ.get("COPRIA_EVENTS_PATH", "data/events.jsonl")
 
+
 def publish(event_type: str, payload: Dict[str, Any]) -> None:
     os.makedirs(os.path.dirname(EVENTS_PATH), exist_ok=True)
     record = {

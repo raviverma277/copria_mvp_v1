@@ -8,24 +8,29 @@ import math
 # Helpers
 # -------------------------------
 
+
 def _fmt_row(row: Dict[str, Any], keys_priority: List[str]) -> str:
     """Compact, stable one-liner from a row, honoring key priority."""
     parts = []
     for k in keys_priority:
-        if k not in row: 
+        if k not in row:
             continue
         v = row.get(k)
-        if v in (None, "", [], {}): 
+        if v in (None, "", [], {}):
             continue
         parts.append(f"{k}={v}")
-    return ", ".join(parts) if parts else ", ".join(f"{k}={row[k]}" for k in list(row)[:6])
+    return (
+        ", ".join(parts) if parts else ", ".join(f"{k}={row[k]}" for k in list(row)[:6])
+    )
+
 
 def _clean_text(s: str) -> str:
     s = re.sub(r"\s+", " ", (s or "").strip())
     return s
 
+
 def _split_paragraphs(notes: str) -> List[str]:
-    if not notes: 
+    if not notes:
         return []
     # split on blank lines or bullet separators
     chunks = re.split(r"(?:\n\s*\n|•|-{2,})", notes)
@@ -36,18 +41,23 @@ def _split_paragraphs(notes: str) -> List[str]:
             out.append(c)
     return out
 
+
 def _score_para(p: str) -> float:
     """Lightweight score: keep mid-length, penalize very short/long."""
     L = len(p)
-    if L <= 30: return 0.1 * L
-    if L >= 600: return 600 / (L + 1)
+    if L <= 30:
+        return 0.1 * L
+    if L >= 600:
+        return 600 / (L + 1)
     # favor 120–300 chars
     center = 210
     return 1.0 / (1.0 + abs(L - center) / 210)
 
+
 # -------------------------------
 # Snippet packers
 # -------------------------------
+
 
 def pack_sov_snippets(
     sov_rows: List[Dict[str, Any]],
@@ -59,24 +69,42 @@ def pack_sov_snippets(
       {"source":"sov","locator":"sheet=1,row=3","snippet":"...", "source_anchor":{"type":"sov","sheet":1,"row":3,"location_id":"WH-A"}}
     """
     keys_priority = keys_priority or [
-        "location_id","address","occupancy","construction",
-        "sprinklered","fire_alarm",
-        "flood_zone","wildfire_risk","earthquake_exposure",
-        "roof_age_years","number_of_stories",
-        "tiv_building","tiv_contents","total_tiv"
+        "location_id",
+        "address",
+        "occupancy",
+        "construction",
+        "sprinklered",
+        "fire_alarm",
+        "flood_zone",
+        "wildfire_risk",
+        "earthquake_exposure",
+        "roof_age_years",
+        "number_of_stories",
+        "tiv_building",
+        "tiv_contents",
+        "total_tiv",
     ]
     out = []
     for i, r in enumerate(sov_rows, start=1):
         snip = _fmt_row(r, keys_priority)
-        out.append({
-            "source": "sov",
-            "locator": f"sheet=1,row={i}",
-            "snippet": snip,
-            "source_anchor": {"type":"sov","sheet":1,"row":i,"location_id": r.get("location_id"), "address": r.get("address")}
-        })
+        out.append(
+            {
+                "source": "sov",
+                "locator": f"sheet=1,row={i}",
+                "snippet": snip,
+                "source_anchor": {
+                    "type": "sov",
+                    "sheet": 1,
+                    "row": i,
+                    "location_id": r.get("location_id"),
+                    "address": r.get("address"),
+                },
+            }
+        )
         if len(out) >= top_k:
             break
     return out
+
 
 def pack_loss_snippets(
     loss_rows: List[Dict[str, Any]],
@@ -84,21 +112,35 @@ def pack_loss_snippets(
     top_k: int = 6,
 ) -> List[Dict[str, Any]]:
     keys_priority = keys_priority or [
-        "policy_year","claim_number","loss_date","cause",
-        "location_id","status","paid","open_reserve","incurred"
+        "policy_year",
+        "claim_number",
+        "loss_date",
+        "cause",
+        "location_id",
+        "status",
+        "paid",
+        "open_reserve",
+        "incurred",
     ]
     out = []
     for i, r in enumerate(loss_rows, start=1):
         snip = _fmt_row(r, keys_priority)
-        out.append({
-            "source": "loss_run",
-            "locator": f"row={i}",
-            "snippet": snip,
-            "source_anchor": {"type":"loss_run","row":i,"location_id": r.get("location_id")}
-        })
+        out.append(
+            {
+                "source": "loss_run",
+                "locator": f"row={i}",
+                "snippet": snip,
+                "source_anchor": {
+                    "type": "loss_run",
+                    "row": i,
+                    "location_id": r.get("location_id"),
+                },
+            }
+        )
         if len(out) >= top_k:
             break
     return out
+
 
 def pack_notes_snippets(
     notes_text: Optional[str],
@@ -112,17 +154,20 @@ def pack_notes_snippets(
     if not isinstance(notes_text, str) or not notes_text.strip():
         return []
     paras = _split_paragraphs(notes_text)
-    scored = [(p, _score_para(p), idx+1) for idx, p in enumerate(paras)]
+    scored = [(p, _score_para(p), idx + 1) for idx, p in enumerate(paras)]
     scored.sort(key=lambda t: t[1], reverse=True)
     out = []
     for p, _s, idx in scored[:top_k]:
-        out.append({
-            "source": "notes",
-            "locator": f"para={idx}",
-            "snippet": p,
-            "source_anchor": {"type":"notes","para": idx}
-        })
+        out.append(
+            {
+                "source": "notes",
+                "locator": f"para={idx}",
+                "snippet": p,
+                "source_anchor": {"type": "notes", "para": idx},
+            }
+        )
     return out
+
 
 # -------------------------------
 # Attachment to risk items
@@ -132,7 +177,7 @@ def attach_topk_evidence_to_items(
     sov_rows: List[Dict[str, Any]],
     loss_rows: List[Dict[str, Any]],
     notes_text: Optional[str] = None,
-    per_item_k: int = 2
+    per_item_k: int = 2,
 ) -> List[Dict[str, Any]]:
     sov_snips = pack_sov_snippets(sov_rows, top_k=10)
     loss_snips = pack_loss_snippets(loss_rows, top_k=10)
@@ -145,17 +190,24 @@ def attach_topk_evidence_to_items(
             a = s.get("source_anchor") or {}
             loc = a.get("location_id")
             if not loc:
-                m = re.search(r"\blocation_id=([A-Za-z0-9\-\_]+)", s.get("snippet",""))
-                if m: loc = m.group(1)
-            if loc: idx[str(loc)] = s
+                m = re.search(r"\blocation_id=([A-Za-z0-9\-\_]+)", s.get("snippet", ""))
+                if m:
+                    loc = m.group(1)
+            if loc:
+                idx[str(loc)] = s
         return idx
 
     sov_idx = _index_by_loc(sov_snips)
     loss_idx = _index_by_loc(loss_snips)
 
     def _loc_from_title(title: str) -> Optional[str]:
-        if not title: return None
-        return title.split(" at ",1)[1].split(" (")[0].strip() if " at " in title else None
+        if not title:
+            return None
+        return (
+            title.split(" at ", 1)[1].split(" (")[0].strip()
+            if " at " in title
+            else None
+        )
 
     enriched = []
     for it in risk_items:
@@ -166,20 +218,27 @@ def attach_topk_evidence_to_items(
             e.setdefault("role", "primary")
 
         # Build a set of existing (source, locator) to dedupe
-        have = {(e.get("source"), e.get("locator")) for e in ev if e.get("source") and e.get("locator")}
+        have = {
+            (e.get("source"), e.get("locator"))
+            for e in ev
+            if e.get("source") and e.get("locator")
+        }
 
         # Compute how many extra snippets we want to add
         # (we don't count existing primary/context; per_item_k is the MIN we want in total)
         need = max(0, per_item_k - len(ev))
         if need <= 0:
-            enriched.append(it); continue
+            enriched.append(it)
+            continue
 
-        loc = _loc_from_title(it.get("title",""))
+        loc = _loc_from_title(it.get("title", ""))
 
         # Preferred order: location-matched sov, loss; then the rest
         ordered_sources = []
-        if loc and loc in sov_idx:  ordered_sources.append(sov_idx[loc])
-        if loc and loc in loss_idx: ordered_sources.append(loss_idx[loc])
+        if loc and loc in sov_idx:
+            ordered_sources.append(sov_idx[loc])
+        if loc and loc in loss_idx:
+            ordered_sources.append(loss_idx[loc])
         ordered_sources += sov_snips + loss_snips + notes_snips
 
         for s in ordered_sources:
@@ -188,13 +247,15 @@ def attach_topk_evidence_to_items(
             key = (s["source"], s["locator"])
             if key in have:
                 continue  # don't add context duplicate of existing primary
-            ev.append({
-                "source": s["source"],
-                "locator": s["locator"],
-                "snippet": s["snippet"],
-                "source_anchor": s.get("source_anchor", {}),
-                "role": "context"   # <-- mark as context
-            })
+            ev.append(
+                {
+                    "source": s["source"],
+                    "locator": s["locator"],
+                    "snippet": s["snippet"],
+                    "source_anchor": s.get("source_anchor", {}),
+                    "role": "context",  # <-- mark as context
+                }
+            )
             have.add(key)
             need -= 1
 
@@ -203,9 +264,11 @@ def attach_topk_evidence_to_items(
 
     return enriched
 
+
 # -------------------------------
 # LLM context builder (for later)
 # -------------------------------
+
 
 def build_llm_context(
     sov_snips: List[Dict[str, Any]],
@@ -232,7 +295,7 @@ def build_llm_context(
         out: List[Dict[str, str]] = []
         for x in lst[:max_per_section]:
             loc = x.get("locator", "")
-            sn  = _trim(x.get("snippet", ""))
+            sn = _trim(x.get("snippet", ""))
             out.append({"locator": loc, "snippet": sn})
         return out
 

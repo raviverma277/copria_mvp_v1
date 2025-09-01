@@ -4,6 +4,7 @@ from typing import Dict, Any, List
 import pandas as pd
 import re
 
+
 def _looks_like_real_headers(cols: List[str]) -> bool:
     """
     Heuristic: real headers tend to be short strings with letters/spaces,
@@ -18,6 +19,7 @@ def _looks_like_real_headers(cols: List[str]) -> bool:
         if re.search(r"[A-Za-z]", cstr) and not re.fullmatch(r"[\d\W_]+", cstr):
             good += 1
     return good >= max(2, int(0.6 * len(cols)))
+
 
 def parse_excel(file) -> Dict[str, Any]:
     """

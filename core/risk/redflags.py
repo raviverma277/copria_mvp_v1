@@ -9,36 +9,44 @@ DEFAULT_RULES_PATH = os.environ.get("RED_FLAG_RULES_PATH", "data/red_flag_rules.
 
 # Map human "Field" labels in the JSON to normalized SOV keys
 FIELD_MAP = {
-    "Sprinkler System (Y/N)": "sprinklered",              # bool
-    "Fire Alarm (Y/N)": "fire_alarm",                     # bool
-    "Flood Zone (e.g., Zone X, AE)": "flood_zone",        # str
+    "Sprinkler System (Y/N)": "sprinklered",  # bool
+    "Fire Alarm (Y/N)": "fire_alarm",  # bool
+    "Flood Zone (e.g., Zone X, AE)": "flood_zone",  # str
     "Wildfire Risk (Low/Moderate/High or ISO Class)": "wildfire_risk",  # str
     "Earthquake Exposure (Low/Moderate/High or ShakeMap Zone)": "earthquake_exposure",  # str
-    "Roof > 20 yrs": "roof_age_years",                    # numeric
-    "Number of Stories": "number_of_stories",             # numeric
-    "Hazardous Materials (Y/N)": "hazardous_materials",   # bool
+    "Roof > 20 yrs": "roof_age_years",  # numeric
+    "Number of Stories": "number_of_stories",  # numeric
+    "Hazardous Materials (Y/N)": "hazardous_materials",  # bool
     # "Prior Claims (Y/N) and Total Loss Amount" handled specially below
     # "Total TIV and Sprinkler System" handled specially below
-    "Total TIV": "total_tiv",                             # numeric (if your normalizer fills this)
+    "Total TIV": "total_tiv",  # numeric (if your normalizer fills this)
 }
 
+
 def _coerce_bool(v):
-    if isinstance(v, bool): return v
-    if v is None: return None
+    if isinstance(v, bool):
+        return v
+    if v is None:
+        return None
     s = str(v).strip().lower()
-    if s in {"true","1","yes","y"}: return True
-    if s in {"false","0","no","n"}: return False
+    if s in {"true", "1", "yes", "y"}:
+        return True
+    if s in {"false", "0", "no", "n"}:
+        return False
     return None
+
 
 def _contains_any(s: str, needles: List[str]) -> bool:
     s = (s or "").lower()
     return any(n.lower() in s for n in needles)
+
 
 def _load_rules(path: str = DEFAULT_RULES_PATH) -> List[Dict[str, Any]]:
     if not os.path.exists(path):
         return []
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
+
 
 def _aggregate_loss(loss_rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     """Aggregate prior claims and totals per location_id."""
@@ -53,19 +61,36 @@ def _aggregate_loss(loss_rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]
             pass
     return agg
 
-def _mk_item(code: str, title: str, severity: str, rationale: str,
-             source: str, locator: str, snippet: str, tags: List[str]) -> RiskItem:
+
+def _mk_item(
+    code: str,
+    title: str,
+    severity: str,
+    rationale: str,
+    source: str,
+    locator: str,
+    snippet: str,
+    tags: List[str],
+) -> RiskItem:
     return RiskItem(
-        code=code, title=title, severity=severity, rationale=rationale,
-        evidence=[EvidenceRef(source=source, locator=locator, snippet=snippet, role="primary")],
-        tags=tags, rule_hits=[code], confidence=0.7
+        code=code,
+        title=title,
+        severity=severity,
+        rationale=rationale,
+        evidence=[
+            EvidenceRef(source=source, locator=locator, snippet=snippet, role="primary")
+        ],
+        tags=tags,
+        rule_hits=[code],
+        confidence=0.7,
     )
+
 
 def evaluate_red_flags(
     rules: List[Dict[str, Any]],
     sov_rows: List[Dict[str, Any]],
     loss_rows: List[Dict[str, Any]],
-    loc_to_addr: Dict[str, str] | None = None
+    loc_to_addr: Dict[str, str] | None = None,
 ) -> List[RiskItem]:
     """Evaluate JSON rules against normalized rows."""
     loc_to_addr = loc_to_addr or {}
@@ -95,16 +120,18 @@ def evaluate_red_flags(
                 except Exception:
                     age_val = None
                 if age_val is not None and age_val > 20:
-                    out.append(_mk_item(
-                        code="RF_ROOF_AGE",
-                        title=f"Roof older than 20 years{at_where}",
-                        severity="medium",
-                        rationale="Roof age exceeds 20 years.",
-                        source="sov",
-                        locator=f"sheet=1,row={i}",
-                        snippet=str({"roof_age_years": age}),
-                        tags=[category, "roof"]
-                    ))
+                    out.append(
+                        _mk_item(
+                            code="RF_ROOF_AGE",
+                            title=f"Roof older than 20 years{at_where}",
+                            severity="medium",
+                            rationale="Roof age exceeds 20 years.",
+                            source="sov",
+                            locator=f"sheet=1,row={i}",
+                            snippet=str({"roof_age_years": age}),
+                            tags=[category, "roof"],
+                        )
+                    )
                 continue
 
             # Special: Prior Claims AND Total Loss
@@ -115,16 +142,18 @@ def evaluate_red_flags(
                 # Condition in file: "Prior Claims == 'Yes' and Total Loss Amount > 100000"
                 trigger = prior and (total > 100000)
                 if trigger:
-                    out.append(_mk_item(
-                        code="RF_PRIOR_CLAIMS",
-                        title=f"Prior significant claims{at_where}",
-                        severity="medium",
-                        rationale=f"Location shows prior claims totalling ${int(total):,}.",
-                        source="loss_run",
-                        locator=f"location={loc}",
-                        snippet=f"claims={agg['count']} total_incurred={total}",
-                        tags=[category, "loss_history"],
-                    ))
+                    out.append(
+                        _mk_item(
+                            code="RF_PRIOR_CLAIMS",
+                            title=f"Prior significant claims{at_where}",
+                            severity="medium",
+                            rationale=f"Location shows prior claims totalling ${int(total):,}.",
+                            source="loss_run",
+                            locator=f"location={loc}",
+                            snippet=f"claims={agg['count']} total_incurred={total}",
+                            tags=[category, "loss_history"],
+                        )
+                    )
                 continue
 
             # Special: TIV > X AND Sprinkler == No
@@ -133,22 +162,36 @@ def evaluate_red_flags(
                 tiv = row.get("total_tiv")
                 if tiv is None:
                     try:
-                        tiv = float(row.get("tiv_building") or 0) + float(row.get("tiv_contents") or 0)
+                        tiv = float(row.get("tiv_building") or 0) + float(
+                            row.get("tiv_contents") or 0
+                        )
                     except Exception:
                         tiv = 0.0
                 sprinkler = _coerce_bool(row.get("sprinklered"))
                 trigger = (tiv > 10_000_000) and (sprinkler is False)
                 if trigger:
-                    out.append(_mk_item(
-                        code="RF_HIGH_TIV_NO_SPRINKLER",
-                        title=f"High value without sprinklers{at_where}",
-                        severity="high",
-                        rationale=f"Total TIV ≈ ${int(tiv):,} and sprinklers absent.",
-                        source="sov",
-                        locator=f"sheet=1,row={i}",
-                        snippet=str({k: row.get(k) for k in ['total_tiv','tiv_building','tiv_contents','sprinklered']}),
-                        tags=[category, "valuation","fire_protection"],
-                    ))
+                    out.append(
+                        _mk_item(
+                            code="RF_HIGH_TIV_NO_SPRINKLER",
+                            title=f"High value without sprinklers{at_where}",
+                            severity="high",
+                            rationale=f"Total TIV ≈ ${int(tiv):,} and sprinklers absent.",
+                            source="sov",
+                            locator=f"sheet=1,row={i}",
+                            snippet=str(
+                                {
+                                    k: row.get(k)
+                                    for k in [
+                                        "total_tiv",
+                                        "tiv_building",
+                                        "tiv_contents",
+                                        "sprinklered",
+                                    ]
+                                }
+                            ),
+                            tags=[category, "valuation", "fire_protection"],
+                        )
+                    )
                 continue
 
             # Generic field mapping
@@ -161,14 +204,19 @@ def evaluate_red_flags(
             # Condition patterns from your JSON
             if cond.startswith("=="):
                 # e.g., == 'No' or == 'High'
-                needle = cond.split("==",1)[1].strip().strip("'\"")
+                needle = cond.split("==", 1)[1].strip().strip("'\"")
                 if isinstance(val, bool):
-                    matches = (val is True and needle.lower()=="yes") or (val is False and needle.lower()=="no")
+                    matches = (val is True and needle.lower() == "yes") or (
+                        val is False and needle.lower() == "no"
+                    )
                 else:
                     matches = str(val).lower() == needle.lower()
             elif cond.startswith("contains"):
                 # e.g., contains 'AE' or 'VE' or 'A'
-                inside = [s.strip().strip("'\"") for s in cond.replace("contains","",1).split("or")]
+                inside = [
+                    s.strip().strip("'\"")
+                    for s in cond.replace("contains", "", 1).split("or")
+                ]
                 matches = _contains_any(str(val), inside)
             elif cond.startswith(">"):
                 try:
@@ -185,15 +233,17 @@ def evaluate_red_flags(
             if matches:
                 code = "RF_" + key.upper()
                 sev = "high" if "sprinkler" in key or "tiv" in key else "medium"
-                out.append(_mk_item(
-                    code=code,
-                    title=f"{desc}{at_where}",
-                    severity=sev,
-                    rationale=desc,
-                    source="sov",
-                    locator=f"sheet=1,row={i}",
-                    snippet=str({key: val}),
-                    tags=[category],
-                ))
+                out.append(
+                    _mk_item(
+                        code=code,
+                        title=f"{desc}{at_where}",
+                        severity=sev,
+                        rationale=desc,
+                        source="sov",
+                        locator=f"sheet=1,row={i}",
+                        snippet=str({key: val}),
+                        tags=[category],
+                    )
+                )
 
     return out

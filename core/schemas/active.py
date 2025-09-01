@@ -7,16 +7,20 @@ import json
 SCHEMA_DIR = Path("core/schemas/json")
 ACTIVE_PTR = Path("core/schemas/active_schema.json")
 
+
 # ------------ I/O helpers ------------
 def _read_json(p: Path) -> dict:
     return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+
 
 def _write_json(p: Path, obj: dict) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
 
+
 def _norm_doc_type(doc_type: str) -> str:
     return (doc_type or "").strip().lower()
+
 
 # ------------ Active pointer accessors ------------
 def get_active_map() -> Dict[str, str]:
@@ -33,8 +37,12 @@ def get_active_map() -> Dict[str, str]:
     if not isinstance(ptr, dict):
         ptr = {}
     # keep any custom entries, but ensure defaults exist
-    out = {**default_map, **{_norm_doc_type(k): v for k, v in ptr.items() if isinstance(v, str)}}
+    out = {
+        **default_map,
+        **{_norm_doc_type(k): v for k, v in ptr.items() if isinstance(v, str)},
+    }
     return out
+
 
 def set_active_map(mapping: Dict[str, str]) -> Dict[str, str]:
     """
@@ -45,10 +53,12 @@ def set_active_map(mapping: Dict[str, str]) -> Dict[str, str]:
     _write_json(ACTIVE_PTR, clean)
     return clean
 
+
 def get_active_name(doc_type: str) -> str:
     """Return the active schema file name for a doc_type."""
     doc = _norm_doc_type(doc_type)
     return get_active_map().get(doc, "")
+
 
 def set_active_name(doc_type: str, file_name: str) -> str:
     """
@@ -61,12 +71,14 @@ def set_active_name(doc_type: str, file_name: str) -> str:
     _write_json(ACTIVE_PTR, ptr)
     return ptr[doc]
 
+
 # ------------ Active schema loading ------------
 def load_active_schema(doc_type: str) -> Tuple[Path, dict]:
     """Return (path, schema_json) for the currently active schema."""
     name = get_active_name(doc_type)
     path = SCHEMA_DIR / name
     return path, _read_json(path)
+
 
 # ------------ Introspection helpers ------------
 def _schema_keys_from_dict(obj) -> set[str]:
@@ -91,15 +103,18 @@ def _schema_keys_from_dict(obj) -> set[str]:
             keys.update(_schema_keys_from_dict(el))
     return keys
 
+
 def active_keys(doc_type: str) -> List[str]:
     """All property keys from the active schema."""
     _, js = load_active_schema(doc_type)
     return sorted(_schema_keys_from_dict(js))
 
+
 def active_titles(doc_type: str) -> Dict[str, str]:
     """Map of key -> title (if present) for nicer UI labels."""
     _, js = load_active_schema(doc_type)
     titles: Dict[str, str] = {}
+
     def _walk(o):
         if isinstance(o, dict):
             props = o.get("properties")
@@ -121,5 +136,6 @@ def active_titles(doc_type: str) -> Dict[str, str]:
         elif isinstance(o, list):
             for el in o:
                 _walk(el)
+
     _walk(js)
     return titles

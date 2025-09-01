@@ -8,6 +8,7 @@ if str(project_root) not in sys.path:
 
 import streamlit as st
 import json, re
+import hashlib
 
 from core.config import get_config
 from core.utils.state import get_state
@@ -24,25 +25,38 @@ from core.schemas.schema_builder import (
     generate_vnext_schema,
 )
 
-import pandas as pd 
+from core.schemas.contracts import RiskFeedback, make_context_signature
+from core.feedback.store import log_feedback, load_feedback
+from collections import Counter
+from core.feedback.store import load_feedback
+
+import pandas as pd
 
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
+
 load_dotenv()
 
 # ---- Ingestion router & contract (ADD) ----
 import uuid, os
-from core.extraction.ingest_router import select_source, from_local, from_cytora, get_bundle_auto
+from core.extraction.ingest_router import (
+    select_source,
+    from_local,
+    from_cytora,
+    get_bundle_auto,
+)
 from core.schemas.contracts import IngestSource
-import uuid
+from core.utils.events import publish
 
 
 def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", str(s).lower()).strip()
 
+
 def _load_json(path: Path) -> dict:
     return json.loads(path.read_text()) if path.exists() else {}
+
 
 def _unmapped_headers(bundle: dict, bucket: str) -> list[str]:
     """
@@ -55,11 +69,12 @@ def _unmapped_headers(bundle: dict, bucket: str) -> list[str]:
 
     for excel in (bundle or {}).get(bucket, []):
         for sh in excel.get("sheets", []) or []:
-            for h in (sh.get("headers") or []):
+            for h in sh.get("headers") or []:
                 key = re.sub(r"[^a-z0-9]+", " ", str(h).lower()).strip()
                 if key not in cw:
                     nm.add(str(h))
     return sorted(nm)
+
 
 def _unmapped_questionnaire_keys(bundle: dict) -> list[str]:
     """
@@ -77,6 +92,7 @@ def _unmapped_questionnaire_keys(bundle: dict) -> list[str]:
             if _norm(key) not in qx:
                 seen.add(key.strip())
     return sorted(seen)
+
 
 def _unmapped_email_fields(results: dict) -> list[str]:
     """
@@ -100,6 +116,7 @@ def _unmapped_email_fields(results: dict) -> list[str]:
 
     return sorted(issues)
 
+
 def _fmt_addr_list(v):
     if isinstance(v, list):
         return ", ".join(v)
@@ -107,9 +124,11 @@ def _fmt_addr_list(v):
         return v
     return ""
 
+
 def combine_label(key: str, title_map: dict) -> str:
     title = title_map.get(key)
     return f"{title}\n({key})" if title and title != key else key
+
 
 def _apply_proposals_preview(source_rows, normalized_rows, proposal_obj):
     """
@@ -137,6 +156,7 @@ def _apply_proposals_preview(source_rows, normalized_rows, proposal_obj):
         out.append(norm)
     return out
 
+
 # ---------- ACTIVE schema helpers ----------
 def _active_keys_map() -> dict[str, set[str]]:
     return {
@@ -144,7 +164,8 @@ def _active_keys_map() -> dict[str, set[str]]:
         "LOSS_RUN": set(active_keys("loss_run")),
     }
 
-def _clean_list(values):    
+
+def _clean_list(values):
     out = []
     seen = set()
     for v in values or []:
@@ -153,6 +174,7 @@ def _clean_list(values):
             seen.add(c)
             out.append(c)
     return out
+
 
 def _filter_new_fields(doc_kind: str, candidates: list[str]) -> list[str]:
     ak = _active_keys_map()
@@ -163,7 +185,10 @@ def _filter_new_fields(doc_kind: str, candidates: list[str]) -> list[str]:
 st.set_page_config(page_title="CoPRIA", layout="wide")
 st.title("CoPRIA – Commercial Property Risk Intelligence Agent")
 
-def _bridge_streamlit_secrets_to_env(keys=("OPENAI_API_KEY", "USE_LLM_MINER", "LLM_MINER_MODEL")):
+
+def _bridge_streamlit_secrets_to_env(
+    keys=("OPENAI_API_KEY", "USE_LLM_MINER", "LLM_MINER_MODEL")
+):
     try:
         # Accessing st.secrets can raise FileNotFoundError if no secrets.toml exists.
         secrets = st.secrets
@@ -178,13 +203,16 @@ def _bridge_streamlit_secrets_to_env(keys=("OPENAI_API_KEY", "USE_LLM_MINER", "L
         # Don't block the app; just log for visibility.
         print("[secrets->env] Skipped bridging Streamlit secrets:", repr(e))
 
+
 _bridge_streamlit_secrets_to_env()
+
 
 # ---- Safe wrapper so missing secrets.toml never shows in the UI ----
 def _safe_llm_status():
     try:
         # lazy import so st.secrets is only touched here
         from core.utils import llm_status as _llm
+
         return _llm.get_llm_status()
     except FileNotFoundError:
         return {
@@ -205,23 +233,31 @@ def _safe_llm_status():
         }
 
 
-
-
 state = get_state()
-
-
 
 
 # ---------------- Sidebar ---------------- #
 
 with st.sidebar:
     st.markdown("### Active Schemas")
-    st.write({
-        "sov": get_active_name("sov"),
-        "loss_run": get_active_name("loss_run"),
-        "questionnaire": get_active_name("questionnaire"),
-    })
-    st.caption(f"SOV keys: {len(active_keys('sov'))} • Loss keys: {len(active_keys('loss_run'))}")
+    st.write(
+        {
+            "sov": get_active_name("sov"),
+            "loss_run": get_active_name("loss_run"),
+            "questionnaire": get_active_name("questionnaire"),
+        }
+    )
+    st.caption(
+        f"SOV keys: {len(active_keys('sov'))} • Loss keys: {len(active_keys('loss_run'))}"
+    )
+
+    # --- Always show current Run ID (if set) ---
+    rid = st.session_state.get("run_id") or state.get("run_id")
+    if rid:
+        st.markdown(f"**Run ID:** `{rid}`")
+    else:
+        st.caption("No run started yet")
+
 
 st.markdown("---")  # divider
 
@@ -243,10 +279,16 @@ with st.container(border=True):
         st.markdown("**Ingest Source**")
         ui_src = st.selectbox(
             "Override ingest source",
-            options=[IngestSource.LOCAL.value, IngestSource.CYTORA.value, IngestSource.AUTO.value],
-            index=[IngestSource.LOCAL, IngestSource.CYTORA, IngestSource.AUTO].index(src),
+            options=[
+                IngestSource.LOCAL.value,
+                IngestSource.CYTORA.value,
+                IngestSource.AUTO.value,
+            ],
+            index=[IngestSource.LOCAL, IngestSource.CYTORA, IngestSource.AUTO].index(
+                src
+            ),
             label_visibility="collapsed",
-            help="Default comes from ENV (INGEST_SOURCE). This overrides it for this session."
+            help="Default comes from ENV (INGEST_SOURCE). This overrides it for this session.",
         )
         if ui_src != src.value:
             os.environ["INGEST_SOURCE"] = ui_src
@@ -259,7 +301,7 @@ with st.container(border=True):
         use_llm_ui = st.checkbox(
             "Use LLM Risk Miner",
             value=_cfg.get("use_llm_miner", False),
-            help="Enable to let the LLM propose additional risks using the evidence snippets"
+            help="Enable to let the LLM propose additional risks using the evidence snippets",
         )
         # session flag the pipeline reads
         st.session_state["use_llm_miner"] = use_llm_ui
@@ -274,7 +316,7 @@ with st.container(border=True):
             f"<div style='padding:8px 10px;border-radius:999px;"
             f"background:{'#16a34a' if ok else '#ef4444'};color:white;width:max-content;'>"
             f"{'Set' if ok else 'Missing'}</div>",
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
 
 
@@ -295,6 +337,14 @@ with st.sidebar:
     with colB:
         process_btn = st.button("Process")
 
+    new_run = st.button("New run", help="Start a fresh run id; keeps old feedback")
+
+    if new_run:
+        for k in ("run_id", "results", "raw_bundle"):
+            st.session_state.pop(k, None)
+            state.pop(k, None)
+        st.rerun()
+
     if classify_btn:
         if files:
             with st.spinner("Classifying..."):
@@ -308,28 +358,35 @@ with st.sidebar:
         source = select_source()
         if source == IngestSource.CYTORA:
             # Clear any stale LLM state (keep your existing clears)
-            for k in ("last_llm_call", "llm_full_draft", "llm_full_make_active_persist"):
+            for k in (
+                "last_llm_call",
+                "llm_full_draft",
+                "llm_full_make_active_persist",
+            ):
                 state.pop(k, None)
                 st.session_state.pop(k, None)
 
-            run_id = str(uuid.uuid4())
-            submission_bundle = from_cytora(run_id=run_id)  # reads sample JSON (or your configured path)
+            run_id = st.session_state.get("run_id") or str(uuid.uuid4())
+            st.session_state["run_id"] = run_id
+            state["run_id"] = run_id
+
+            submission_bundle = from_cytora(
+                run_id=run_id
+            )  # reads sample JSON (or your configured path)
             st.sidebar.caption(f"Run: `{run_id[:8]}`")
 
             with st.spinner("Extracting from Cytora sample…"):
                 state["results"] = run_extraction_pipeline(
-                    parsed_bundle=None,
-                    submission_bundle=submission_bundle
+                    parsed_bundle=None, submission_bundle=submission_bundle
                 )
             st.success("Extraction complete.")
 
             # Persist results for the next render and re-run the app to draw tabs
             st.session_state["results"] = state.get("results")
             try:
-                st.rerun()               # Streamlit ≥ 1.32
+                st.rerun()  # Streamlit ≥ 1.32
             except Exception:
                 st.experimental_rerun()  # fallback for older versions
-
 
         # --- LOCAL / AUTO path (your existing behavior) ---
         # Reuse classification if present; else parse fresh once
@@ -349,13 +406,17 @@ with st.sidebar:
 
             # NEW: also clear the persisted LLM full-draft so the 'Resume last LLM draft' panel disappears
             state.pop("llm_full_draft", None)
-            st.session_state.pop("llm_full_draft", None)  # defensive, in case you ever mirror it
+            st.session_state.pop(
+                "llm_full_draft", None
+            )  # defensive, in case you ever mirror it
 
             # (Optional) clear the 'Make ACTIVE' checkbox state for the draft panel
             st.session_state.pop("llm_full_make_active_persist", None)
 
             # ---- BEGIN: NEW ingestion wiring (kept as you added) ----
-            run_id = str(uuid.uuid4())
+            run_id = st.session_state.get("run_id") or str(uuid.uuid4())
+            st.session_state["run_id"] = run_id
+            state["run_id"] = run_id
             source = select_source()
 
             # Prepare args that describe your current local-parsed state
@@ -388,14 +449,10 @@ with st.sidebar:
             with st.spinner("Extracting..."):
                 # Keep your legacy parsed flow, and also pass the new contract (optional in pipeline)
                 state["results"] = run_extraction_pipeline(
-                    parsed_bundle=bundle,
-                    submission_bundle=submission_bundle
+                    parsed_bundle=bundle, submission_bundle=submission_bundle
                 )
             st.success("Extraction complete.")
 
-
-
-    
     st.sidebar.markdown("### 🔍 LLM Status")
     llm_info = _safe_llm_status()
 
@@ -413,21 +470,41 @@ with st.sidebar:
         st.sidebar.error("Last call failed")
     else:
         st.sidebar.info("No calls yet")
-    
+
+    st.sidebar.subheader("📝 Feedback")
+    rid = st.session_state.get("run_id") or state.get("run_id")
+    all_fb = load_feedback(run_id=rid) if rid else []
+    c = Counter([f.verdict for f in all_fb])
+    total = sum(c.values())
+    if total:
+        bits = [f"{total} total"]
+        for k in ["confirm", "dismiss", "downgrade", "upgrade", "needs-more-info"]:
+            if c.get(k, 0):
+                bits.append(f"{c[k]} {k}")
+        st.sidebar.caption(" · ".join(bits))
+    else:
+        st.sidebar.caption("No feedback yet")
+
     # --- Full-schema (Section F) LLM diagnostics: action, time, duration, model, tokens ---
     try:
         from core.schemas.schema_builder import get_llm_last_meta, get_llm_last_error
     except Exception:
-        def get_llm_last_meta(): return None
-        def get_llm_last_error(): return None
+
+        def get_llm_last_meta():
+            return None
+
+        def get_llm_last_error():
+            return None
 
     st.sidebar.markdown("---")
     st.sidebar.markdown("**Full-schema draft (LLM)**")
 
     # Persisted payload from the Section F button handler
-    last_full = state.get("last_llm_call")  # set in Section F when you call propose_full_schema_from_llm
+    last_full = state.get(
+        "last_llm_call"
+    )  # set in Section F when you call propose_full_schema_from_llm
     meta = get_llm_last_meta() or {}
-    err  = get_llm_last_error()
+    err = get_llm_last_error()
 
     if not last_full:
         st.sidebar.caption("No full-schema LLM calls yet.")
@@ -450,13 +527,18 @@ with st.sidebar:
             st.sidebar.write(f"**Model:** {model}")
 
         usage = last_full.get("usage") or meta.get("usage") or {}
-        if isinstance(usage, dict) and any(k in usage for k in ("prompt_tokens","completion_tokens","total_tokens")):
+        if isinstance(usage, dict) and any(
+            k in usage for k in ("prompt_tokens", "completion_tokens", "total_tokens")
+        ):
             st.sidebar.write("**Tokens:**")
-            st.sidebar.json({
-                "prompt": usage.get("prompt_tokens"),
-                "completion": usage.get("completion_tokens"),
-                "total": usage.get("total_tokens"),
-            }, expanded=False)
+            st.sidebar.json(
+                {
+                    "prompt": usage.get("prompt_tokens"),
+                    "completion": usage.get("completion_tokens"),
+                    "total": usage.get("total_tokens"),
+                },
+                expanded=False,
+            )
 
         # Success/error indicator
         if err:
@@ -466,17 +548,19 @@ with st.sidebar:
 
 
 # --------------- Tabs ---------------- #
-tabs = st.tabs([
-    "Classification",     # 0
-    "Submission",         # 1
-    "SOV",                # 2
-    "Loss Runs",          # 3
-    "Email",              # 4   <-- new
-    "Questionnaire",      # 5   <-- new
-    "Risk & Pricing",     # 6
-    "Schema Review",      # 7
-    "JSON"                # 8
-])
+tabs = st.tabs(
+    [
+        "Classification",  # 0
+        "Submission",  # 1
+        "SOV",  # 2
+        "Loss Runs",  # 3
+        "Email",  # 4   <-- new
+        "Questionnaire",  # 5   <-- new
+        "Risk & Pricing",  # 6
+        "Schema Review",  # 7
+        "JSON",  # 8
+    ]
+)
 
 
 # --- Tab 0: Classification (routing debug) --- #
@@ -484,7 +568,9 @@ with tabs[0]:
     st.subheader("Document Classification")
     bundle = state.get("raw_bundle")
     if not bundle:
-        st.info("Upload files and click **Classify** (or just click **Process** to classify+extract in one go).")
+        st.info(
+            "Upload files and click **Classify** (or just click **Process** to classify+extract in one go)."
+        )
     else:
         # colored pills
         def pill(label: str, count: int):
@@ -502,7 +588,14 @@ with tabs[0]:
                 unsafe_allow_html=True,
             )
 
-        buckets = ["submission", "sov", "loss_run", "questionnaire", "email_body", "other"]
+        buckets = [
+            "submission",
+            "sov",
+            "loss_run",
+            "questionnaire",
+            "email_body",
+            "other",
+        ]
         cols = st.columns(len(buckets))
         for i, b in enumerate(buckets):
             with cols[i]:
@@ -514,7 +607,9 @@ with tabs[0]:
 
         # per-bucket details
         for b in buckets:
-            with st.expander(f"{b.upper()} – {len(bundle.get(b, []))} item(s)", expanded=False):
+            with st.expander(
+                f"{b.upper()} – {len(bundle.get(b, []))} item(s)", expanded=False
+            ):
                 for idx, item in enumerate(bundle.get(b, []), 1):
                     name = item.get("filename", "(no name)")
                     meta = item.get("meta", {})
@@ -525,21 +620,34 @@ with tabs[0]:
                     page_tags = item.get("page_tags", [])
                     if page_tags:
                         tag_str = ", ".join(
-                            [f"p{t.get('page')}:{t.get('type')}({float(t.get('confidence',0)):.2f})" for t in page_tags[:12]]
+                            [
+                                f"p{t.get('page')}:{t.get('type')}({float(t.get('confidence',0)):.2f})"
+                                for t in page_tags[:12]
+                            ]
                         )
                         if len(page_tags) > 12:
                             tag_str += " ..."
                         st.write("page_tags:", tag_str)
 
                     if "text" in item and item["text"]:
-                        st.text_area("text preview", item["text"][:1500], height=120, key=f"txtprev_{b}_{idx}")
+                        st.text_area(
+                            "text preview",
+                            item["text"][:1500],
+                            height=120,
+                            key=f"txtprev_{b}_{idx}",
+                        )
                     elif "sheets" in item:
                         for sh in item["sheets"][:2]:
                             st.write(f"Sheet: {sh.get('name')}")
                             headers = sh.get("headers") or []
                             st.write("Headers:", ", ".join(str(h) for h in headers))
                     elif "body_text" in item:
-                        st.text_area("email preview", item["body_text"][:1500], height=120, key=f"emailprev_{idx}")
+                        st.text_area(
+                            "email preview",
+                            item["body_text"][:1500],
+                            height=120,
+                            key=f"emailprev_{idx}",
+                        )
 
 # If we have extraction results, render the other tabs
 results = state.get("results")
@@ -549,7 +657,7 @@ with tabs[1]:
     st.subheader("Submission Summary (Lloyd's Fields)")
     if results:
         sub = results.get("submission_core", {})
-        st.json(sub)        
+        st.json(sub)
     else:
         st.info("Click **Process** to extract submission fields.")
 
@@ -564,7 +672,9 @@ with tabs[2]:
     latest_sov_prop = sov_props[-1] if sov_props else None
 
     # Allow a quick preview using the latest proposal (not persisted)
-    preview = st.checkbox("Preview with proposed mappings (not saved)", value=False, key="sov_preview")
+    preview = st.checkbox(
+        "Preview with proposed mappings (not saved)", value=False, key="sov_preview"
+    )
     rows_to_show = sov_rows
     if preview and sov_source and latest_sov_prop:
         # This helper is your existing function that overlays proposal mappings on the fly
@@ -574,6 +684,7 @@ with tabs[2]:
         st.info("No SOV rows found yet. Click **Process**.")
     else:
         import pandas as pd
+
         df_sov = pd.DataFrame(rows_to_show)
 
         # ---- FIX: remove duplicate column labels to avoid PyArrow/Streamlit crash ----
@@ -585,7 +696,8 @@ with tabs[2]:
 
         # Provisional/unknown columns we carried through from normalization (prefixed)
         provisional_cols = [
-            c for c in df_sov.columns
+            c
+            for c in df_sov.columns
             if str(c).startswith("_provisional_") and c not in schema_cols
         ]
         hidden_count = len(provisional_cols)
@@ -594,7 +706,7 @@ with tabs[2]:
         show_prov = st.checkbox(
             f"Show provisional/unknown fields ({hidden_count} hidden)",
             value=False,
-            key="sov_show_prov"
+            key="sov_show_prov",
         )
 
         # Build the display list and ensure no duplicates make it through
@@ -629,7 +741,6 @@ with tabs[2]:
             st.success("SOV rows conform to the active schema.")
 
 
-
 # --- Tab 3: Loss Runs --- #
 with tabs[3]:
     st.subheader("Loss Runs")
@@ -641,16 +752,21 @@ with tabs[3]:
     latest_loss_prop = loss_props[-1] if loss_props else None
 
     # Allow a quick preview using the latest proposal (not persisted)
-    preview_loss = st.checkbox("Preview with proposed mappings (not saved)", value=False, key="loss_preview")
+    preview_loss = st.checkbox(
+        "Preview with proposed mappings (not saved)", value=False, key="loss_preview"
+    )
     rows_to_show_loss = loss_rows
     if preview_loss and loss_source and latest_loss_prop:
         # Your existing helper to overlay proposal mappings on the fly
-        rows_to_show_loss = _apply_proposals_preview(loss_source, loss_rows, latest_loss_prop)
+        rows_to_show_loss = _apply_proposals_preview(
+            loss_source, loss_rows, latest_loss_prop
+        )
 
     if not rows_to_show_loss:
         st.info("No Loss Run rows found yet. Click **Process**.")
     else:
         import pandas as pd
+
         df_loss = pd.DataFrame(rows_to_show_loss)
 
         # ---- FIX: remove duplicate column labels to avoid PyArrow/Streamlit crash ----
@@ -662,7 +778,8 @@ with tabs[3]:
 
         # Provisional/unknown columns we carried through from normalization (prefixed)
         provisional_cols = [
-            c for c in df_loss.columns
+            c
+            for c in df_loss.columns
             if str(c).startswith("_provisional_") and c not in schema_cols
         ]
         hidden_count = len(provisional_cols)
@@ -671,7 +788,7 @@ with tabs[3]:
         show_prov = st.checkbox(
             f"Show provisional/unknown fields ({hidden_count} hidden)",
             value=False,
-            key="loss_show_prov"
+            key="loss_show_prov",
         )
 
         # Build the display list and ensure no duplicates make it through
@@ -698,13 +815,14 @@ with tabs[3]:
     # Schema validation results (if present)
     loss_issues = (results or {}).get("loss_run_validation", [])
     if loss_issues:
-        st.warning(f"Schema validation: {len(loss_issues)} issue(s) found for Loss Runs")
+        st.warning(
+            f"Schema validation: {len(loss_issues)} issue(s) found for Loss Runs"
+        )
         with st.expander("View Loss Run schema validation details", expanded=False):
             st.json(loss_issues)
     else:
         if loss_rows:
             st.success("Loss Run rows conform to the active schema.")
-
 
 
 # --- Tab 4: Email --- #
@@ -718,7 +836,12 @@ with tabs[4]:
             if env.get("cc"):
                 st.write(f"**Cc:** {_fmt_addr_list(env.get('cc'))}")
             st.write(f"**Subject:** {env.get('subject','')}")
-            st.text_area("Body preview", env.get("body_text",""), height=120, key=f"email_body_{i}")
+            st.text_area(
+                "Body preview",
+                env.get("body_text", ""),
+                height=120,
+                key=f"email_body_{i}",
+            )
             if env.get("attachments"):
                 st.caption("Attachments:")
                 for att in env["attachments"]:
@@ -739,11 +862,13 @@ with tabs[5]:
     if results and results.get("questionnaire_context"):
         for i, qc in enumerate(results["questionnaire_context"], 1):
             st.markdown(f"**[{i}] Source:** {qc.get('source','')}")
-            st.text_area("Excerpt", qc.get("excerpt",""), height=140, key=f"qcx_{i}")
+            st.text_area("Excerpt", qc.get("excerpt", ""), height=140, key=f"qcx_{i}")
         # Schema Discovery aide: show unmapped questionnaire keys found in text
         q_unmapped = _unmapped_questionnaire_keys(state.get("raw_bundle", {}))
         if q_unmapped:
-            st.caption("Unmapped questionnaire keys (consider adding to core/schemas/questionnaire_crosswalk.json):")
+            st.caption(
+                "Unmapped questionnaire keys (consider adding to core/schemas/questionnaire_crosswalk.json):"
+            )
             st.write(q_unmapped[:60])  # cap the list for readability
 
     else:
@@ -762,13 +887,91 @@ with tabs[6]:
             st.caption("No risk items detected yet.")
         else:
             st.caption(f"{len(risk_items)} item(s) found")
-            # Optional quick filter by severity (keeps backwards-compat if field missing)
-            severities = sorted({(ri.get("severity") or "unknown") for ri in risk_items})
-            sel = st.multiselect("Filter by severity", options=severities, default=severities, label_visibility="collapsed")
-            to_show = [ri for ri in risk_items if (ri.get("severity") or "unknown") in sel]
+            # --- Filters: severity + feedback status ---
+            severities = sorted(
+                {(ri.get("severity") or "unknown") for ri in risk_items}
+            )
+            colA, colB = st.columns([0.6, 0.4])
 
-            for ri in to_show:
+            with colA:
+                sel = st.multiselect(
+                    "Filter by severity",
+                    options=severities,
+                    default=severities,
+                    label_visibility="collapsed",
+                )
+
+            with colB:
+                fb_filter = st.radio(
+                    "Show",
+                    options=["All", "With feedback", "Needs-more-info"],
+                    index=0,
+                    horizontal=True,
+                    label_visibility="collapsed",
+                )
+
+            def _has_feedback(ri):
+                from core.feedback.store import load_feedback
+
+                rid = st.session_state.get("run_id")
+                uid = ri.get("uid") or ""
+                return bool(load_feedback(run_id=rid, risk_uid=uid))
+
+            def _last_verdict_is(ri, verdict):
+                from core.feedback.store import load_feedback
+
+                rid = st.session_state.get("run_id")
+                uid = ri.get("uid") or ""
+                fb = load_feedback(run_id=rid, risk_uid=uid)
+                return fb and fb[-1].verdict == verdict
+
+            filtered = [
+                ri for ri in risk_items if (ri.get("severity") or "unknown") in sel
+            ]
+            if fb_filter == "With feedback":
+                filtered = [ri for ri in filtered if _has_feedback(ri)]
+            elif fb_filter == "Needs-more-info":
+                filtered = [
+                    ri for ri in filtered if _last_verdict_is(ri, "needs-more-info")
+                ]
+
+            to_show = filtered
+
+            def _safe_uid(ri: dict) -> str | None:
+                # Prefer pipeline-provided UID
+                u = (ri or {}).get("uid")
+                if u:
+                    return str(u)
+                # Build a stable fallback from code/title/first evidence locator
+                code = str((ri or {}).get("code") or "")
+                title = str((ri or {}).get("title") or "")
+                ev = (ri or {}).get("evidence") or []
+                loc = (
+                    str(ev[0].get("locator")) if ev and isinstance(ev[0], dict) else ""
+                )
+                base = f"{code}|{title}|{loc}"
+                h = (
+                    hashlib.sha1(base.encode("utf-8")).hexdigest()
+                    if base.strip("|")
+                    else ""
+                )
+                return h[:12] if h else None
+
+            for idx, ri in enumerate(to_show):
                 with st.container(border=True):
+                    safe_uid = _safe_uid(
+                        ri
+                    )  # may still be None if item is extremely sparse
+                    print(
+                        "[DEBUG] UI risk uid:",
+                        ri.get("uid"),
+                        "| safe_uid:",
+                        safe_uid,
+                        "| code/title:",
+                        ri.get("code"),
+                        "/",
+                        ri.get("title"),
+                    )
                     title = ri.get("title") or ri.get("code") or "Risk"
                     sev = (ri.get("severity") or "unknown").upper()
                     conf = ri.get("confidence", 0.0)
@@ -779,7 +982,58 @@ with tabs[6]:
                             st.caption("🔎 LLM-proposed (merged)")
                         else:
                             st.caption("🔎 LLM-proposed")
-                    st.markdown(f"**{title}**  ·  _severity_: **{sev}**  ·  _confidence_: {conf:.2f}")
+
+                    # --- Verdict badge (only if we have a uid) ---
+                    _last_fb_list = []
+                    if safe_uid:
+                        rid_hdr = st.session_state.get("run_id") or state.get("run_id")
+                        _last_fb_list = load_feedback(run_id=rid_hdr, risk_uid=safe_uid)
+                        if not _last_fb_list:
+                            # fallback to latest feedback across any run (still only for this uid)
+                            _last_fb_list = load_feedback(
+                                run_id=None, risk_uid=safe_uid
+                            )
+
+                    if _last_fb_list:
+                        _v = _last_fb_list[-1].verdict
+                        _badge_text, _badge_color = {
+                            "confirm": ("✅ confirmed", "#16a34a"),
+                            "dismiss": ("❌ dismissed", "#ef4444"),
+                            "downgrade": ("⬇ downgraded", "#f59e0b"),
+                            "upgrade": ("⬆ upgraded", "#3b82f6"),
+                            "needs-more-info": ("❔ needs info", "#6b7280"),
+                        }.get(_v, ("", ""))
+                        if _badge_text:
+                            st.markdown(
+                                f"<div style='float:right;padding:4px 10px;border-radius:999px;"
+                                f"background:{_badge_color};color:white;font-weight:600;'>"
+                                f"{_badge_text}</div>",
+                                unsafe_allow_html=True,
+                            )
+
+                    # Style the card based on last verdict (reuse the list we already fetched above)
+                    _last_v = _last_fb_list[-1].verdict if _last_fb_list else None
+
+                    if _last_v == "dismiss":
+                        st.markdown(
+                            "<div style='opacity:0.6; filter:grayscale(0.3);'>",
+                            unsafe_allow_html=True,
+                        )
+                    elif _last_v == "upgrade":
+                        st.markdown(
+                            "<div style='box-shadow:0 0 0 3px rgba(59,130,246,0.35); padding:4px; border-radius:12px;'>",
+                            unsafe_allow_html=True,
+                        )
+                    elif _last_v == "downgrade":
+                        st.markdown(
+                            "<div style='box-shadow:0 0 0 3px rgba(245,158,11,0.35); padding:4px; border-radius:12px;'>",
+                            unsafe_allow_html=True,
+                        )
+                    # (No wrapper for confirm / needs-more-info)
+
+                    st.markdown(
+                        f"**{title}**  ·  _severity_: **{sev}**  ·  _confidence_: {conf:.2f}"
+                    )
                     if tags:
                         st.caption("Tags: " + ", ".join(tags))
 
@@ -794,23 +1048,136 @@ with tabs[6]:
 
                     # Evidence (rows/snippets/locators)
                     ev = ri.get("evidence") or []
-                    primary = [e for e in ev if (e.get("role","primary") == "primary")]
+                    primary = [e for e in ev if (e.get("role", "primary") == "primary")]
                     context = [e for e in ev if e.get("role") == "context"]
 
                     if primary:
                         st.markdown("_Evidence_")
                         for e in primary:
-                            st.code(f"{e.get('source')} | {e.get('locator')} → {e.get('snippet')}")
+                            st.code(
+                                f"{e.get('source')} | {e.get('locator')} → {e.get('snippet')}"
+                            )
                             if e.get("source_anchor"):
                                 st.caption(f"anchor: {e['source_anchor']}")
 
                     if context:
                         with st.expander(f"More context ({len(context)})"):
                             for e in context:
-                                st.code(f"{e.get('source')} | {e.get('locator')} → {e.get('snippet')}")
+                                st.code(
+                                    f"{e.get('source')} | {e.get('locator')} → {e.get('snippet')}"
+                                )
                                 if e.get("source_anchor"):
                                     st.caption(f"anchor: {e['source_anchor']}")
 
+                    # --- Underwriter feedback controls (verdict + rationale) ---
+                    has_real_uid = bool(ri.get("uid"))  # pipeline-provided uid?
+                    verdict_options = [
+                        "confirm",
+                        "dismiss",
+                        "downgrade",
+                        "upgrade",
+                        "needs-more-info",
+                    ]
+
+                    with st.expander("Underwriter verdict", expanded=False):
+                        if not has_real_uid:
+                            # No stable pipeline UID → show read-only controls, do not attempt load/save
+                            st.caption(
+                                "No stable ID for this item yet — feedback is disabled for now."
+                            )
+                            v_key = f"verdict_{idx}_{safe_uid or 'noid'}"
+                            r_key = f"rationale_{idx}_{safe_uid or 'noid'}"
+                            st.radio(
+                                "Verdict",
+                                options=verdict_options,
+                                index=0,
+                                horizontal=True,
+                                key=v_key,
+                                disabled=True,
+                            )
+                            st.text_area(
+                                "Rationale (optional)",
+                                value="",
+                                key=r_key,
+                                placeholder="No UID; cannot save feedback for this item yet.",
+                                disabled=True,
+                            )
+                        else:
+                            # We have a real UID → load prior feedback (current run, then any run)
+                            risk_uid = str(ri.get("uid"))
+                            run_id_for_fb = st.session_state.get("run_id") or state.get(
+                                "run_id"
+                            )
+
+                            prior = load_feedback(
+                                run_id=run_id_for_fb, risk_uid=risk_uid
+                            )
+                            if not prior:
+                                prior = load_feedback(
+                                    run_id=None, risk_uid=risk_uid
+                                )  # fallback across runs
+                            last = prior[-1] if prior else None
+
+                            v_idx = verdict_options.index(last.verdict) if last else 0
+                            v_key = f"verdict_{idx}_{risk_uid}"
+                            r_key = f"rationale_{idx}_{risk_uid}"
+                            s_key = f"save_fb_{idx}_{risk_uid}"
+
+                            verdict = st.radio(
+                                "Verdict",
+                                options=verdict_options,
+                                index=v_idx,
+                                horizontal=True,
+                                key=v_key,
+                                help="Confirm/dismiss or adjust severity, or flag that more info is needed.",
+                            )
+                            rationale = st.text_area(
+                                "Rationale (optional)",
+                                value=(last.rationale if last else ""),
+                                key=r_key,
+                                placeholder="Why? Add context, thresholds, docs to request…",
+                            )
+
+                            if st.button("Save feedback", key=s_key):
+                                fb = RiskFeedback(
+                                    run_id=run_id_for_fb or "",
+                                    risk_uid=risk_uid,
+                                    verdict=verdict,
+                                    rationale=rationale or "",
+                                    context_signature=make_context_signature(ri),
+                                    risk_snapshot=ri,
+                                )
+                                log_feedback(fb)
+                                # Emit the internal event (for future agents/learning)
+                                try:
+                                    publish(
+                                        "RiskFeedbackReceived",
+                                        {
+                                            "run_id": run_id_for_fb,
+                                            "risk_uid": risk_uid,
+                                            "verdict": verdict,
+                                            "rationale_len": len(rationale or ""),
+                                            "context_signature": fb.context_signature,
+                                            "submitted_at": fb.submitted_at,
+                                            "source": "ui",
+                                        },
+                                    )
+                                except Exception as e:
+                                    print(
+                                        "[events] RiskFeedbackReceived emit failed:",
+                                        repr(e),
+                                    )
+
+                                st.success("Saved.")
+                                # Refresh the card so the latest feedback shows instantly
+                                try:
+                                    st.rerun()
+                                except Exception:
+                                    st.experimental_rerun()
+
+                    # close any wrapper div we may have opened for styling
+                    if _last_v in ("dismiss", "upgrade", "downgrade"):
+                        st.markdown("</div>", unsafe_allow_html=True)
 
         st.divider()
 
@@ -841,17 +1208,23 @@ with tabs[7]:
 
     # Helpers we already rely on elsewhere
     from core.schemas.active import (
-        load_active_schema, get_active_name, set_active_name,
-        active_keys, active_titles
+        load_active_schema,
+        get_active_name,
+        set_active_name,
+        active_keys,
+        active_titles,
     )
     from core.schemas.schema_builder import (
-        propose_vnext_schema, write_vnext_and_point_active, generate_vnext_schema
+        propose_vnext_schema,
+        write_vnext_and_point_active,
+        generate_vnext_schema,
     )
+
     # Crosswalk IO (these exist in your project)
     from core.extraction.field_mapping import _read_crosswalk, _write_crosswalk
 
     results = state.get("results") or {}
-    proposals = (results.get("proposals") or {})
+    proposals = results.get("proposals") or {}
     sov_props = proposals.get("sov") or []
     loss_props = proposals.get("loss_run") or []
 
@@ -863,7 +1236,11 @@ with tabs[7]:
     PROV_PREFIX = "_provisional_"
 
     def _strip_provisional(key: str) -> str:
-        return key[len(PROV_PREFIX):] if isinstance(key, str) and key.startswith(PROV_PREFIX) else key
+        return (
+            key[len(PROV_PREFIX) :]
+            if isinstance(key, str) and key.startswith(PROV_PREFIX)
+            else key
+        )
 
     def _norm_src_header(s: str) -> str:
         """Local normalizer for crosswalk keys (lowercase + collapse non-alnum)."""
@@ -888,7 +1265,9 @@ with tabs[7]:
     st.markdown("### A) Review & approve LLM proposals (header → machine key)")
 
     if not sov_props and not loss_props:
-        st.info("No LLM proposals available. Process a pack with unknown headers to see suggestions.")
+        st.info(
+            "No LLM proposals available. Process a pack with unknown headers to see suggestions."
+        )
     else:
         colA, colB = st.columns(2)
 
@@ -913,16 +1292,18 @@ with tabs[7]:
                             chk = st.checkbox(
                                 f"[{conf:.2f}] {src} → {tgt}",
                                 value=False,
-                                key=f"sov_map_{i}"
+                                key=f"sov_map_{i}",
                             )
                             if chk:
-                                sel.append({
-                                    "doc_type": "sov",
-                                    "source_header": src,
-                                    "target_field": tgt,
-                                    "confidence": conf,
-                                    "rationale": rat,
-                                })
+                                sel.append(
+                                    {
+                                        "doc_type": "sov",
+                                        "source_header": src,
+                                        "target_field": tgt,
+                                        "confidence": conf,
+                                        "rationale": rat,
+                                    }
+                                )
                         if st.form_submit_button("Approve selected SOV mappings"):
                             # Append to session; actual persistence happens in Section C
                             state["approved_maps"]["sov"].extend(sel)
@@ -936,7 +1317,9 @@ with tabs[7]:
                 latest = loss_props[-1]
                 mappings = latest.get("mappings") or []
                 if not mappings:
-                    st.caption("No mapping suggestions in the latest Loss Run proposal.")
+                    st.caption(
+                        "No mapping suggestions in the latest Loss Run proposal."
+                    )
                 else:
                     with st.form("approve_loss_maps"):
                         sel = []
@@ -948,19 +1331,23 @@ with tabs[7]:
                             chk = st.checkbox(
                                 f"[{conf:.2f}] {src} → {tgt}",
                                 value=False,
-                                key=f"loss_map_{i}"
+                                key=f"loss_map_{i}",
                             )
                             if chk:
-                                sel.append({
-                                    "doc_type": "loss_run",
-                                    "source_header": src,
-                                    "target_field": tgt,
-                                    "confidence": conf,
-                                    "rationale": rat,
-                                })
+                                sel.append(
+                                    {
+                                        "doc_type": "loss_run",
+                                        "source_header": src,
+                                        "target_field": tgt,
+                                        "confidence": conf,
+                                        "rationale": rat,
+                                    }
+                                )
                         if st.form_submit_button("Approve selected Loss Run mappings"):
                             state["approved_maps"]["loss_run"].extend(sel)
-                            st.success(f"Queued {len(sel)} Loss Run mapping(s) for Apply.")
+                            st.success(
+                                f"Queued {len(sel)} Loss Run mapping(s) for Apply."
+                            )
 
     # ---------------------------------------------------------------------
     # Section B: Queue NEW fields for vNext (Profiler + LLM)
@@ -968,7 +1355,7 @@ with tabs[7]:
     st.markdown("### B) Queue NEW fields for vNext (Profiler + LLM)")
 
     # Gather not-in-ACTIVE suggestions from the extraction results (already filtered up-stream)
-    prof_sug = ((results or {}).get("schema_suggestions") or {})
+    prof_sug = (results or {}).get("schema_suggestions") or {}
 
     def _listify_suggestions_block(x):
         if not x:
@@ -983,7 +1370,7 @@ with tabs[7]:
             return [str(k) for k in x.keys()]
         return []
 
-    prof_sov_list  = _listify_suggestions_block(prof_sug.get("sov"))
+    prof_sov_list = _listify_suggestions_block(prof_sug.get("sov"))
     prof_loss_list = _listify_suggestions_block(prof_sug.get("loss_run"))
 
     # LLM "new_fields" (from the latest proposals lists built above in this tab)
@@ -991,13 +1378,17 @@ with tabs[7]:
         if not props_list:
             return []
         latest = props_list[-1]
-        return [nf.get("field_name") for nf in (latest.get("new_fields") or []) if nf.get("field_name")]
+        return [
+            nf.get("field_name")
+            for nf in (latest.get("new_fields") or [])
+            if nf.get("field_name")
+        ]
 
-    llm_sov_new  = _latest_new_fields(sov_props)
+    llm_sov_new = _latest_new_fields(sov_props)
     llm_loss_new = _latest_new_fields(loss_props)
 
     # Filter LLM new_fields against ACTIVE so only not-in-ACTIVE remain
-    llm_sov_new  = _filter_new_fields("SOV", llm_sov_new)
+    llm_sov_new = _filter_new_fields("SOV", llm_sov_new)
     llm_loss_new = _filter_new_fields("LOSS_RUN", llm_loss_new)
 
     # ---- Robust de-dup logic (UI level)
@@ -1017,7 +1408,7 @@ with tabs[7]:
                     grouped[base] = name
         return [(disp, base) for base, disp in grouped.items()]
 
-    sov_candidates  = _prepare_candidates(prof_sov_list,  llm_sov_new)
+    sov_candidates = _prepare_candidates(prof_sov_list, llm_sov_new)
     loss_candidates = _prepare_candidates(prof_loss_list, llm_loss_new)
 
     col1, col2 = st.columns(2)
@@ -1029,13 +1420,24 @@ with tabs[7]:
         else:
             with st.form("approve_sov_newfields"):
                 adds = {}
-                for display_name, clean_base in sorted(sov_candidates, key=lambda x: x[1]):
-                    chk = st.checkbox(f"Queue: {display_name}", value=False, key=f"sov_nf_{display_name}")
+                for display_name, clean_base in sorted(
+                    sov_candidates, key=lambda x: x[1]
+                ):
+                    chk = st.checkbox(
+                        f"Queue: {display_name}",
+                        value=False,
+                        key=f"sov_nf_{display_name}",
+                    )
                     if chk:
-                        adds[clean_base] = {"type": "string", "title": clean_base.replace('_',' ').title()}
+                        adds[clean_base] = {
+                            "type": "string",
+                            "title": clean_base.replace("_", " ").title(),
+                        }
                 if st.form_submit_button("Queue selected SOV new fields"):
                     state["approved_new_fields"]["sov"].update(adds)
-                    st.success(f"Queued {len(adds)} SOV field(s) for vNext (stored clean).")
+                    st.success(
+                        f"Queued {len(adds)} SOV field(s) for vNext (stored clean)."
+                    )
 
     with col2:
         st.markdown("**Loss Run – approve new fields**")
@@ -1044,14 +1446,24 @@ with tabs[7]:
         else:
             with st.form("approve_loss_newfields"):
                 adds = {}
-                for display_name, clean_base in sorted(loss_candidates, key=lambda x: x[1]):
-                    chk = st.checkbox(f"Queue: {display_name}", value=False, key=f"loss_nf_{display_name}")
+                for display_name, clean_base in sorted(
+                    loss_candidates, key=lambda x: x[1]
+                ):
+                    chk = st.checkbox(
+                        f"Queue: {display_name}",
+                        value=False,
+                        key=f"loss_nf_{display_name}",
+                    )
                     if chk:
-                        adds[clean_base] = {"type": "string", "title": clean_base.replace('_',' ').title()}
+                        adds[clean_base] = {
+                            "type": "string",
+                            "title": clean_base.replace("_", " ").title(),
+                        }
                 if st.form_submit_button("Queue selected Loss Run new fields"):
                     state["approved_new_fields"]["loss_run"].update(adds)
-                    st.success(f"Queued {len(adds)} Loss Run field(s) for vNext (stored clean).")
-
+                    st.success(
+                        f"Queued {len(adds)} Loss Run field(s) for vNext (stored clean)."
+                    )
 
     # ---------------------------------------------------------------------
     # Section C: Enrich queued field properties with LLM (optional)
@@ -1070,7 +1482,7 @@ with tabs[7]:
     def _sanitize_samples(vals):
         """Trim strings, coerce common boolean-like strings to booleans, dedupe while preserving order."""
         out = []
-        for v in (vals or []):
+        for v in vals or []:
             if isinstance(v, str):
                 s = v.strip()
                 low = s.lower()
@@ -1112,24 +1524,31 @@ with tabs[7]:
 
         colA, colB = st.columns([0.7, 0.3])
         with colA:
-            with st.expander(f"Queued fields for {bucket} (click to view)", expanded=False):
+            with st.expander(
+                f"Queued fields for {bucket} (click to view)", expanded=False
+            ):
                 st.json(queued)
-            with st.expander(f"Sample preview for {bucket} (sanitized)", expanded=False):
+            with st.expander(
+                f"Sample preview for {bucket} (sanitized)", expanded=False
+            ):
                 # show only the first few examples per field so you can confirm input quality
                 st.json({f: samples.get(f, [])[:10] for f in fields})
-            st.caption(f"Fields: {len(fields)} • With samples (any): {sum(1 for f in fields if samples.get(f))}")
+            st.caption(
+                f"Fields: {len(fields)} • With samples (any): {sum(1 for f in fields if samples.get(f))}"
+            )
 
         with colB:
-            if st.button(f"LLM-enrich {bucket} queued fields", key=f"llm_enrich_{bucket}"):
+            if st.button(
+                f"LLM-enrich {bucket} queued fields", key=f"llm_enrich_{bucket}"
+            ):
                 enriched = enrich_properties_with_llm(bucket, queued, samples)
                 # Update in-place so the Generate step uses richer properties
                 state["approved_new_fields"][bucket] = enriched
                 st.success(f"Enriched {len(enriched)} field(s) for **{bucket}**.")
-                with st.expander(f"Preview enriched properties for {bucket}", expanded=False):
+                with st.expander(
+                    f"Preview enriched properties for {bucket}", expanded=False
+                ):
                     st.json(enriched)
-
-
-
 
     # ---------------------------------------------------------------------
     # Section D: APPLY approved mappings → crosswalk.json (FIX HERE)
@@ -1140,7 +1559,9 @@ with tabs[7]:
         xw = _read_crosswalk()  # dict: normalized source header -> target field
 
         # Build a flat list of approvals from both buckets
-        combined = (state["approved_maps"].get("sov") or []) + (state["approved_maps"].get("loss_run") or [])
+        combined = (state["approved_maps"].get("sov") or []) + (
+            state["approved_maps"].get("loss_run") or []
+        )
 
         # Normalize and strip provisional before persisting
         applied = 0
@@ -1159,7 +1580,9 @@ with tabs[7]:
             if dt in ("sov", "loss_run"):
                 if tgt_clean not in set(active_keys(dt)):
                     # surface to user but still allow writing if you prefer
-                    skipped.append(f"[{dt}] {raw_src} → {raw_tgt} (clean='{tgt_clean}') not in active schema")
+                    skipped.append(
+                        f"[{dt}] {raw_src} → {raw_tgt} (clean='{tgt_clean}') not in active schema"
+                    )
                     # If you want to hard-block, `continue` here.
                     # continue
 
@@ -1172,9 +1595,14 @@ with tabs[7]:
         state["approved_maps"] = {"sov": [], "loss_run": []}
 
         if applied:
-            st.success(f"Applied {applied} mapping(s) to crosswalk.json (provisional prefix stripped).")
+            st.success(
+                f"Applied {applied} mapping(s) to crosswalk.json (provisional prefix stripped)."
+            )
         if skipped:
-            with st.expander("Some mappings were not recognized in active schema (FYI)", expanded=False):
+            with st.expander(
+                "Some mappings were not recognized in active schema (FYI)",
+                expanded=False,
+            ):
                 st.write("\n".join(skipped))
 
     # ---------------------------------------------------------------------
@@ -1188,7 +1616,7 @@ with tabs[7]:
         options=("sov", "loss_run"),
         index=0,
         key="gen_bucket_select",
-        help="Select which schema to generate the vNext for."
+        help="Select which schema to generate the vNext for.",
     )
     queued = state["approved_new_fields"].get(bucket) or {}
 
@@ -1200,17 +1628,17 @@ with tabs[7]:
             "Make ACTIVE",
             value=False,  # <-- do not pre-select
             key="make_active_np_unified",
-            help="If checked, the active pointer will be updated to the newly generated schema."
+            help="If checked, the active pointer will be updated to the newly generated schema.",
         )
     with colZ:
-        gen_disabled = (len(queued) == 0)
+        gen_disabled = len(queued) == 0
         if st.button(
-            "Generate vNext schema",
-            key="gen_noprev_unified",
-            disabled=gen_disabled
+            "Generate vNext schema", key="gen_noprev_unified", disabled=gen_disabled
         ):
             new_name, cur, vnext = propose_vnext_schema(bucket, queued)
-            dest = write_vnext_and_point_active(bucket, new_name, vnext, make_active=make_active_np)
+            dest = write_vnext_and_point_active(
+                bucket, new_name, vnext, make_active=make_active_np
+            )
             state["approved_new_fields"][bucket] = {}
             st.success(
                 f"Wrote {dest.name} and "
@@ -1221,14 +1649,26 @@ with tabs[7]:
     # Optional preview (uses the same single Make ACTIVE checkbox above)
     if st.checkbox("Preview vNext schema diff", value=False, key="diff_unified"):
         new_name, cur, vnext = propose_vnext_schema(bucket, queued)
-        cur_txt = json.dumps(cur, indent=2, ensure_ascii=False).splitlines(keepends=True)
-        nxt_txt = json.dumps(vnext, indent=2, ensure_ascii=False).splitlines(keepends=True)
-        diff = difflib.unified_diff(cur_txt, nxt_txt, fromfile="current", tofile=new_name, n=2)
+        cur_txt = json.dumps(cur, indent=2, ensure_ascii=False).splitlines(
+            keepends=True
+        )
+        nxt_txt = json.dumps(vnext, indent=2, ensure_ascii=False).splitlines(
+            keepends=True
+        )
+        diff = difflib.unified_diff(
+            cur_txt, nxt_txt, fromfile="current", tofile=new_name, n=2
+        )
         st.code("".join(diff) or "(no changes)")
 
         # use the same single generate button (no duplicate “make active” checkbox here)
-        if st.button("Generate vNext schema (from preview)", key="gen_preview_unified", disabled=(len(queued) == 0)):
-            dest = write_vnext_and_point_active(bucket, new_name, vnext, make_active=make_active_np)
+        if st.button(
+            "Generate vNext schema (from preview)",
+            key="gen_preview_unified",
+            disabled=(len(queued) == 0),
+        ):
+            dest = write_vnext_and_point_active(
+                bucket, new_name, vnext, make_active=make_active_np
+            )
             state["approved_new_fields"][bucket] = {}
             st.success(
                 f"Wrote {dest.name} and "
@@ -1241,15 +1681,24 @@ with tabs[7]:
     # ---------------------------------------------------------------------
     import time
     from datetime import datetime as _dt
+
     st.markdown("### F) Experimental: Draft a full schema with LLM (from data)")
 
-    from core.schemas.schema_builder import propose_full_schema_from_llm, write_vnext_and_point_active
+    from core.schemas.schema_builder import (
+        propose_full_schema_from_llm,
+        write_vnext_and_point_active,
+    )
+
     # Optional diagnostics if you've added them in schema_builder.py:
     try:
         from core.schemas.schema_builder import get_llm_last_error, get_llm_last_meta
     except Exception:
-        def get_llm_last_error(): return None
-        def get_llm_last_meta(): return None
+
+        def get_llm_last_error():
+            return None
+
+        def get_llm_last_meta():
+            return None
 
     # --- Controls to create a new draft ---
     col1, col2, col3 = st.columns([0.35, 0.35, 0.30])
@@ -1259,33 +1708,47 @@ with tabs[7]:
             options=("sov", "loss_run"),
             index=0,
             key="llm_full_bucket",
-            help="The LLM will analyze current normalized rows and propose a full JSON Schema."
+            help="The LLM will analyze current normalized rows and propose a full JSON Schema.",
         )
     with col2:
-        max_fields = st.slider("Max fields to include", 10, 120, 60, 5, key="llm_full_max_fields")
+        max_fields = st.slider(
+            "Max fields to include", 10, 120, 60, 5, key="llm_full_max_fields"
+        )
     with col3:
-        samples_per = st.slider("Samples per field", 3, 30, 10, 1, key="llm_full_samples_per")
+        samples_per = st.slider(
+            "Samples per field", 3, 30, 10, 1, key="llm_full_samples_per"
+        )
 
-    rows_for_bucket = (results or {}).get("sov" if bucket_full == "sov" else "loss_runs") or []
+    rows_for_bucket = (results or {}).get(
+        "sov" if bucket_full == "sov" else "loss_runs"
+    ) or []
 
     # Small diagnostics panel
     with st.expander("LLM diagnostics (click to view)", expanded=False):
         import os
-        st.write({
-            "OPENAI_API_KEY set": bool(os.environ.get("OPENAI_API_KEY")),
-            "OPENAI_MODEL": os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
-            "rows_available": len(rows_for_bucket),
-            "last_llm_error": get_llm_last_error(),
-        })
+
+        st.write(
+            {
+                "OPENAI_API_KEY set": bool(os.environ.get("OPENAI_API_KEY")),
+                "OPENAI_MODEL": os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+                "rows_available": len(rows_for_bucket),
+                "last_llm_error": get_llm_last_error(),
+            }
+        )
 
     # --- Create a new draft ---
-    btn_disabled = (len(rows_for_bucket) == 0)
-    if st.button("Draft full schema with LLM", key="btn_llm_full_draft", disabled=btn_disabled):
+    btn_disabled = len(rows_for_bucket) == 0
+    if st.button(
+        "Draft full schema with LLM", key="btn_llm_full_draft", disabled=btn_disabled
+    ):
         t0 = time.perf_counter()
         started_iso = _dt.now().isoformat(timespec="seconds")
 
         new_name, cur_active, draft_schema = propose_full_schema_from_llm(
-            bucket_full, rows_for_bucket, max_fields=max_fields, samples_per_field=samples_per
+            bucket_full,
+            rows_for_bucket,
+            max_fields=max_fields,
+            samples_per_field=samples_per,
         )
         duration_ms = round((time.perf_counter() - t0) * 1000)
 
@@ -1299,7 +1762,11 @@ with tabs[7]:
 
         # Pull diagnostics from schema_builder (model/usage + any error)
         try:
-            from core.schemas.schema_builder import get_llm_last_error, get_llm_last_meta
+            from core.schemas.schema_builder import (
+                get_llm_last_error,
+                get_llm_last_meta,
+            )
+
             last_err = get_llm_last_error()
             last_meta = get_llm_last_meta() or {}
         except Exception:
@@ -1318,7 +1785,9 @@ with tabs[7]:
             "error": last_err,
         }
         state["last_llm_call"] = payload
-        st.session_state["last_llm_call"] = payload  # <- ensure sidebar can read immediately
+        st.session_state["last_llm_call"] = (
+            payload  # <- ensure sidebar can read immediately
+        )
 
         # Show outcome in the main pane
         if last_err:
@@ -1328,40 +1797,58 @@ with tabs[7]:
 
         # IMPORTANT: force a rerun so the sidebar (rendered above) picks up the new state now
         try:
-            st.rerun()   # Streamlit >=1.32
+            st.rerun()  # Streamlit >=1.32
         except Exception:
             st.experimental_rerun()  # older Streamlit fallback
-
 
     # --- Resume last draft (persistent preview + generate) ---
     draft_state = state.get("llm_full_draft")
     if draft_state:
         st.markdown("#### Resume last LLM draft")
-        bkt   = draft_state.get("bucket")
+        bkt = draft_state.get("bucket")
         fname = draft_state.get("file_name")
-        cur   = draft_state.get("current") or {"type": "object", "properties": {}}
-        draft = draft_state.get("draft")   or {"type": "object", "properties": {}}
+        cur = draft_state.get("current") or {"type": "object", "properties": {}}
+        draft = draft_state.get("draft") or {"type": "object", "properties": {}}
 
         colA, colB = st.columns([0.6, 0.4])
         with colA:
             st.caption(f"Bucket: **{bkt}** • File: **{fname}**")
             with st.expander("Preview draft schema JSON", expanded=False):
-                st.code(json.dumps(draft, indent=2, ensure_ascii=False), language="json")
+                st.code(
+                    json.dumps(draft, indent=2, ensure_ascii=False), language="json"
+                )
             # Diff vs ACTIVE
             try:
-                cur_txt   = json.dumps(cur,   indent=2, ensure_ascii=False).splitlines(keepends=True)
-                draft_txt = json.dumps(draft, indent=2, ensure_ascii=False).splitlines(keepends=True)
+                cur_txt = json.dumps(cur, indent=2, ensure_ascii=False).splitlines(
+                    keepends=True
+                )
+                draft_txt = json.dumps(draft, indent=2, ensure_ascii=False).splitlines(
+                    keepends=True
+                )
                 import difflib
-                diff = difflib.unified_diff(cur_txt, draft_txt, fromfile="ACTIVE", tofile=fname, n=2)
+
+                diff = difflib.unified_diff(
+                    cur_txt, draft_txt, fromfile="ACTIVE", tofile=fname, n=2
+                )
                 st.code("".join(diff) or "(no changes)")
             except Exception:
                 st.info("Diff unavailable.")
         with colB:
-            make_active = st.checkbox("Make ACTIVE", value=False, key="llm_full_make_active_persist")
+            make_active = st.checkbox(
+                "Make ACTIVE", value=False, key="llm_full_make_active_persist"
+            )
             # Guard if draft is empty
-            disabled_save = not isinstance(draft, dict) or not (draft.get("properties") or {})
-            if st.button("Save draft as vNext", key="btn_llm_full_write_persist", disabled=disabled_save):
-                dest = write_vnext_and_point_active(bkt, fname, draft, make_active=make_active)
+            disabled_save = not isinstance(draft, dict) or not (
+                draft.get("properties") or {}
+            )
+            if st.button(
+                "Save draft as vNext",
+                key="btn_llm_full_write_persist",
+                disabled=disabled_save,
+            ):
+                dest = write_vnext_and_point_active(
+                    bkt, fname, draft, make_active=make_active
+                )
                 st.success(
                     f"Wrote {dest.name} and "
                     f"{'updated' if make_active else 'did not change'} active pointer for **{bkt}**."
@@ -1369,10 +1856,6 @@ with tabs[7]:
                 st.info("Click **Process** to validate against the new schema.")
     else:
         st.caption("No LLM draft in session yet. Use the control above to create one.")
-
-
-
-
 
     # ---------------------------------------------------------------------
     # Section G: Quick status
@@ -1383,14 +1866,14 @@ with tabs[7]:
         st.write("**Queued new fields for vNext:**")
         st.json(state.get("approved_new_fields"))
         st.write("**Active schema files:**")
-        st.json({
-            "sov": get_active_name("sov"),
-            "loss_run": get_active_name("loss_run")
-        })
+        st.json(
+            {"sov": get_active_name("sov"), "loss_run": get_active_name("loss_run")}
+        )
 
 
 # ===== JSON TAB HELPERS (add these just above the JSON tab) =====
 from typing import List, Dict
+
 
 def _listify_suggestions(raw) -> List[str]:
     """
@@ -1410,6 +1893,7 @@ def _listify_suggestions(raw) -> List[str]:
         return [str(k) for k in raw.keys()]
     return []
 
+
 def _extract_profiler_suggestions(results: dict) -> Dict[str, List[str]]:
     """
     Returns {'SOV': [...], 'LOSS_RUN': [...]} of profiler suggestions.
@@ -1423,6 +1907,7 @@ def _extract_profiler_suggestions(results: dict) -> Dict[str, List[str]]:
     out["LOSS_RUN"] = _listify_suggestions(sug.get("loss_run"))
     return out
 
+
 def _extract_llm_field_suggestions(results: dict) -> Dict[str, List[str]]:
     """
     Returns {'SOV': [...], 'LOSS_RUN': [...]} of LLM-suggested field names.
@@ -1435,7 +1920,7 @@ def _extract_llm_field_suggestions(results: dict) -> Dict[str, List[str]]:
         return out
 
     # 1) From LLM mapping proposals: new_fields array (if present)
-    props = (results.get("proposals") or {})
+    props = results.get("proposals") or {}
     for bucket, key in (("sov", "SOV"), ("loss_run", "LOSS_RUN")):
         lst = props.get(bucket) or []
         if lst:
@@ -1450,21 +1935,23 @@ def _extract_llm_field_suggestions(results: dict) -> Dict[str, List[str]]:
     inf = (results or {}).get("schema_inference", {})
     llm = (inf or {}).get("_llm", {})
     for bucket, key in (("sov", "SOV"), ("loss_run", "LOSS_RUN")):
-        props2 = ((llm.get(bucket) or {}).get("properties") or {})
+        props2 = (llm.get(bucket) or {}).get("properties") or {}
         if isinstance(props2, dict):
             out[key].extend([str(k) for k in props2.keys()])
 
     # de-dupe while preserving order
-    def _uniq(seq): 
+    def _uniq(seq):
         s, outl = set(), []
         for x in seq:
             if x not in s:
-                s.add(x); outl.append(x)
+                s.add(x)
+                outl.append(x)
         return outl
 
     out["SOV"] = _uniq(out["SOV"])
     out["LOSS_RUN"] = _uniq(out["LOSS_RUN"])
     return out
+
 
 def render_json_tab_filtered_suggestions(results: dict):
     """
@@ -1478,15 +1965,15 @@ def render_json_tab_filtered_suggestions(results: dict):
 
     # --- Gather Profiler + LLM suggestions (already filtered elsewhere) ---
     prof = _extract_profiler_suggestions(results)
-    llm  = _extract_llm_field_suggestions(results)
+    llm = _extract_llm_field_suggestions(results)
 
     sov_prof_new = _filter_new_fields("SOV", prof["SOV"])
-    lr_prof_new  = _filter_new_fields("LOSS_RUN", prof["LOSS_RUN"])
-    sov_llm_new  = _filter_new_fields("SOV", llm["SOV"])
-    lr_llm_new   = _filter_new_fields("LOSS_RUN", llm["LOSS_RUN"])
+    lr_prof_new = _filter_new_fields("LOSS_RUN", prof["LOSS_RUN"])
+    sov_llm_new = _filter_new_fields("SOV", llm["SOV"])
+    lr_llm_new = _filter_new_fields("LOSS_RUN", llm["LOSS_RUN"])
 
     sov_combined = _clean_list(sov_prof_new + sov_llm_new)
-    lr_combined  = _clean_list(lr_prof_new + lr_llm_new)
+    lr_combined = _clean_list(lr_prof_new + lr_llm_new)
 
     # --- Tiny badge helper ---
     def pill(label: str, count: int, color: str = "#0ea5e9"):
@@ -1511,14 +1998,14 @@ def render_json_tab_filtered_suggestions(results: dict):
 
     # --- Summary badges row ---
     st.markdown(
-        pill("SOV total", len(sov_combined), "#16a34a") +
-        pill("SOV (Profiler)", len(sov_prof_new), "#0ea5e9") +
-        pill("SOV (LLM)", len(sov_llm_new), "#8b5cf6") +
-        "&nbsp;&nbsp;" +
-        pill("Loss total", len(lr_combined), "#16a34a") +
-        pill("Loss (Profiler)", len(lr_prof_new), "#0ea5e9") +
-        pill("Loss (LLM)", len(lr_llm_new), "#8b5cf6"),
-        unsafe_allow_html=True
+        pill("SOV total", len(sov_combined), "#16a34a")
+        + pill("SOV (Profiler)", len(sov_prof_new), "#0ea5e9")
+        + pill("SOV (LLM)", len(sov_llm_new), "#8b5cf6")
+        + "&nbsp;&nbsp;"
+        + pill("Loss total", len(lr_combined), "#16a34a")
+        + pill("Loss (Profiler)", len(lr_prof_new), "#0ea5e9")
+        + pill("Loss (LLM)", len(lr_llm_new), "#8b5cf6"),
+        unsafe_allow_html=True,
     )
 
     # --- Build nice tables ---
@@ -1530,17 +2017,17 @@ def render_json_tab_filtered_suggestions(results: dict):
     sov_df = pd.concat(
         [
             as_table(sov_prof_new, "Profiler", "SOV"),
-            as_table(sov_llm_new,  "LLM",      "SOV"),
+            as_table(sov_llm_new, "LLM", "SOV"),
         ],
-        ignore_index=True
+        ignore_index=True,
     )
 
     lr_df = pd.concat(
         [
             as_table(lr_prof_new, "Profiler", "Loss Run"),
-            as_table(lr_llm_new,  "LLM",      "Loss Run"),
+            as_table(lr_llm_new, "LLM", "Loss Run"),
         ],
-        ignore_index=True
+        ignore_index=True,
     )
 
     # --- Two pretty blocks side-by-side ---
@@ -1596,12 +2083,12 @@ with tabs[8]:
     debug_raw = st.checkbox(
         "Show raw LLM responses (before cleaning/filtering)",
         value=False,
-        help="Displays the exact text returned by the LLM for each doc_type."
+        help="Displays the exact text returned by the LLM for each doc_type.",
     )
     debug_parsed = st.checkbox(
         "Show parsed LLM JSON (before post-filtering)",
         value=False,
-        help="If available, shows the parsed object directly from the LLM output, before we filter non-allowed target_field values."
+        help="If available, shows the parsed object directly from the LLM output, before we filter non-allowed target_field values.",
     )
 
     if debug_raw:
@@ -1619,14 +2106,18 @@ with tabs[8]:
                         st.code(latest, language="json")
 
         else:
-            st.info("No raw LLM responses stored. Run **Process** after triggering Schema Discovery.")
+            st.info(
+                "No raw LLM responses stored. Run **Process** after triggering Schema Discovery."
+            )
 
     if debug_parsed:
         parsed_store = state.get("proposals_parsed") or {}
         st.subheader("Parsed LLM JSON (pre-filter)")
         if parsed_store:
             for bucket, items in parsed_store.items():
-                with st.expander(f"PARSED • {bucket} ({len(items)} object(s))", expanded=False):
+                with st.expander(
+                    f"PARSED • {bucket} ({len(items)} object(s))", expanded=False
+                ):
                     for idx, obj in enumerate(items, 1):
                         st.markdown(f"**{bucket} parsed #{idx}**")
                         st.json(obj)
@@ -1654,7 +2145,9 @@ with tabs[8]:
                     with st.expander(f"Loss proposal #{i}"):
                         st.json(p)
         else:
-            st.info("No proposals (either all headers mapped via crosswalk, or no OPENAI_API_KEY set).")
+            st.info(
+                "No proposals (either all headers mapped via crosswalk, or no OPENAI_API_KEY set)."
+            )
 
         # ===== NEW: Filtered suggestions (Profiler + LLM) not-in-ACTIVE =====
         render_json_tab_filtered_suggestions(results)
@@ -1667,16 +2160,19 @@ with tabs[8]:
             for bucket in ("sov", "loss_run"):
                 props2 = (llm.get(bucket) or {}).get("properties") or {}
                 if props2:
-                    with st.expander(f"{bucket.upper()} – LLM proposed properties", expanded=False):
+                    with st.expander(
+                        f"{bucket.upper()} – LLM proposed properties", expanded=False
+                    ):
                         st.json(props2)
 
         st.subheader("Schema Validation (summary)")
-        st.write({
-            "sov_issues": len((results or {}).get("sov_validation", []) or []),
-            "loss_run_issues": len((results or {}).get("loss_run_validation", []) or []),
-        })
+        st.write(
+            {
+                "sov_issues": len((results or {}).get("sov_validation", []) or []),
+                "loss_run_issues": len(
+                    (results or {}).get("loss_run_validation", []) or []
+                ),
+            }
+        )
     else:
         st.info("Run **Process** to see extracted JSON & proposals.")
-
-
-

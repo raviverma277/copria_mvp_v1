@@ -5,6 +5,7 @@ import re
 import os
 from collections import defaultdict
 
+
 # --------- Utility: safe import of OpenAI for optional fallback ----------
 def _get_openai_client():
     """
@@ -19,6 +20,7 @@ def _get_openai_client():
     try:
         # new SDK (openai>=1.x)
         from openai import OpenAI  # type: ignore
+
         client = OpenAI(api_key=api_key)
         return client, "responses_v1"
     except Exception:
@@ -26,10 +28,12 @@ def _get_openai_client():
     try:
         # legacy SDK
         import openai  # type: ignore
+
         openai.api_key = api_key
         return openai, "chat_legacy"
     except Exception:
         return None, None
+
 
 # ------------------------------------------------------------------------
 
@@ -96,7 +100,14 @@ class DocumentClassifier:
         self.llm_threshold = 0.55
 
         # Allowed buckets
-        self.allowed = ["submission", "sov", "loss_run", "questionnaire", "email_body", "other"]
+        self.allowed = [
+            "submission",
+            "sov",
+            "loss_run",
+            "questionnaire",
+            "email_body",
+            "other",
+        ]
 
     # --------------- helpers ----------------
 
@@ -225,7 +236,9 @@ class DocumentClassifier:
 
     # --------------- public: excel ----------------
 
-    def classify_excel(self, sheets: List[Dict[str, Any]], filename: Optional[str] = None) -> Dict[str, Any]:
+    def classify_excel(
+        self, sheets: List[Dict[str, Any]], filename: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Classify an Excel workbook based on headers/values across sheets.
         """
@@ -234,12 +247,22 @@ class DocumentClassifier:
         loss_hits = 0
 
         sov_hdrs = [
-            r"\btiv\b", r"total insured value", r"\bconstruction\b", r"\boccupancy\b",
-            r"\byear built\b", r"\bsprinkler", r"\balarm\b", r"\bpostcode\b|\bzip\b"
+            r"\btiv\b",
+            r"total insured value",
+            r"\bconstruction\b",
+            r"\boccupancy\b",
+            r"\byear built\b",
+            r"\bsprinkler",
+            r"\balarm\b",
+            r"\bpostcode\b|\bzip\b",
         ]
         loss_hdrs = [
-            r"\bdate of loss\b", r"\bcause of loss\b", r"\bclaim (no\.|number)\b",
-            r"\bgross (paid|outstanding)\b", r"\bnet (paid|outstanding)\b", r"\bstatus\b"
+            r"\bdate of loss\b",
+            r"\bcause of loss\b",
+            r"\bclaim (no\.|number)\b",
+            r"\bgross (paid|outstanding)\b",
+            r"\bnet (paid|outstanding)\b",
+            r"\bstatus\b",
         ]
         sov_re = [re.compile(p, re.I) for p in sov_hdrs]
         loss_re = [re.compile(p, re.I) for p in loss_hdrs]
@@ -273,8 +296,7 @@ class DocumentClassifier:
             for sh in sheets[:2]:
                 sample_headers.extend([str(h) for h in (sh.get("headers") or [])][:12])
             fb = self._llm_fallback_text(
-                text="\n".join(sample_headers),
-                filename=filename or "workbook.xlsx"
+                text="\n".join(sample_headers), filename=filename or "workbook.xlsx"
             )
             if fb:
                 bucket = fb.get("bucket", bucket)
@@ -285,7 +307,9 @@ class DocumentClassifier:
 
     # --------------- optional LLM fallback ----------------
 
-    def _llm_fallback_text(self, text: str, filename: Optional[str]) -> Optional[Dict[str, Any]]:
+    def _llm_fallback_text(
+        self, text: str, filename: Optional[str]
+    ) -> Optional[Dict[str, Any]]:
         """
         Ask an LLM to classify into one of the allowed buckets.
         Only used if OPENAI_API_KEY is present. Returns None if LLM is unavailable.
@@ -298,7 +322,7 @@ class DocumentClassifier:
         system = (
             "You categorize insurance-related documents. "
             "Allowed labels: submission, sov, loss_run, questionnaire, email_body, other. "
-            "Reply strictly as JSON: {\"bucket\": \"<label>\", \"confidence\": 0.0-1.0}."
+            'Reply strictly as JSON: {"bucket": "<label>", "confidence": 0.0-1.0}.'
         )
         user = (
             f"Filename: {filename or '(unknown)'}\n\n"
@@ -311,8 +335,10 @@ class DocumentClassifier:
                 # openai>=1 client
                 resp = client.responses.create(
                     model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-                    input=[{"role": "system", "content": system},
-                           {"role": "user", "content": user}],
+                    input=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
                     response_format={"type": "json_object"},
                 )
                 content = resp.output_text  # SDK helper to get the string
@@ -320,12 +346,15 @@ class DocumentClassifier:
                 # legacy chat.completions
                 content = client.ChatCompletion.create(
                     model=os.getenv("OPENAI_MODEL", "gpt-4-0613"),
-                    messages=[{"role": "system", "content": system},
-                              {"role": "user", "content": user}],
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
                     temperature=0,
                 )["choices"][0]["message"]["content"]
 
             import json
+
             data = json.loads(content)
             bucket = (data.get("bucket") or "other").lower()
             if bucket not in self.allowed:
