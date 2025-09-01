@@ -23,6 +23,8 @@ from core.risk.evidence import (
 )
 from core.risk.miner import mine_additional_risks
 from core.config import get_config
+from core.utils.events import publish
+from core.risk.miner import _uid_from_item  # reuse the helper
 import streamlit as st
 import os
 
@@ -401,86 +403,182 @@ def run_extraction_pipeline(
     notes_snips = pack_notes_snippets(notes_text, top_k=6)
     llm_ctx = build_llm_context(sov_snips, loss_snips, notes_snips)
 
-
-
     # --- Risk items (baseline rules + short LLM justifications) ---
+    # Build minimal bundle shape the rules expect
+    bundle_for_rules = {
+        "sov":      [{"sheets": [{"rows": sov_rows}]}],
+        "loss_run": [{"sheets": [{"rows": loss_rows}]}],
+    }
+
+    risk_items: List[Any] = []
     try:
-        # Build minimal bundle shape the rules expect
-        bundle_for_rules = {
-            "sov":      [{"sheets": [{"rows": sov_rows}]}],
-            "loss_run": [{"sheets": [{"rows": loss_rows}]}],
-        }
-        risk_items = rules_from_bundle(bundle_for_rules)         # deterministic rules
-        # Red-flag JSON rules (adds more deterministic findings)
+        # 1) Deterministic rules
+        base_items = rules_from_bundle(bundle_for_rules)
+        print(f"[RISK] base rules items: {len(base_items)}")
+
+        # 2) JSON red-flag rules (also deterministic)
         try:
-            # Build a small location->address index for nicer titles
             loc_to_addr = {str(r.get("location_id")): r.get("address") for r in sov_rows if r.get("location_id")}
             rf_rules = _load_rules()
             rf_items = evaluate_red_flags(rf_rules, sov_rows, loss_rows, loc_to_addr)
-            risk_items.extend(rf_items)
-        except Exception:
-            pass
-        risk_items = justify_with_llm(risk_items)                # add concise LLM notes
-        risk_items = dedupe_and_cap(risk_items)                  # de-dupe & cap list
+            print(f"[RISK] red-flag items: {len(rf_items)}")
+        except Exception as e:
+            print("[RISK] red-flag evaluation failed:", repr(e))
+            rf_items = []
 
-        # Make it JSON-serializable for the UI
-        risk_items_payload = [
-            (ri.model_dump() if hasattr(ri, "model_dump")
-            else (ri.dict() if hasattr(ri, "dict") else dict(ri)))
-            for ri in risk_items
-        ]
+        risk_items = base_items + rf_items
 
-        # ---- LLM risk miner (optional, behind flag) ----     
+    except Exception as e:
+        # If even deterministic rules failed, surface it but don't crash the whole run
+        print("[RISK] deterministic stage failed:", repr(e))
+        risk_items = []
 
+    # 3) Concise LLM justification (optional, fail-soft)
+    try:
+        before = len(risk_items)
+        risk_items = justify_with_llm(risk_items)     # adds short notes only
+        print(f"[RISK] justify_with_llm ok (kept {before} items)")
+    except Exception as e:
+        print("[RISK] justify_with_llm failed, keeping deterministic items:", repr(e))
+
+    # 4) De-dupe & cap (always safe)
+    try:
+        risk_items = dedupe_and_cap(risk_items)
+        print(f"[RISK] after dedupe: {len(risk_items)}")
+    except Exception as e:
+        print("[RISK] dedupe failed, leaving list as-is:", repr(e))
+
+    # 5) Make it JSON-serializable for the UI
+    risk_items_payload = [
+        (ri.model_dump() if hasattr(ri, "model_dump")
+        else (ri.dict() if hasattr(ri, "dict") else dict(ri)))
+        for ri in (risk_items or [])
+    ]
+
+    # 6) Optional: LLM risk miner (behind UI/flag). Failure here must not nuke items.
+    try:
         cfg = get_config()
         use_llm = st.session_state.get("use_llm_miner", cfg.get("use_llm_miner", False))
-        if use_llm:
-            print("use llm for risks")          
-            try:
-                existing_codes  = { (ri.get("code") or "") for ri in risk_items_payload }
-                existing_titles = { (ri.get("title") or "") for ri in risk_items_payload }
-                # propose new risks grounded in our snippets
-                mined = mine_additional_risks(llm_ctx, existing_codes, existing_titles, model=cfg["llm_miner_model"])
-                print("[PIPELINE] LLM miner output count:", len(mined))
-                print("DEBUG LLM miner raw output:", mined) 
-                # merge & simple de-dupe by (code, title)
-                risk_items_payload.extend(mined)
-                merged, seen = [], {}
-                for x in risk_items_payload:
-                    key = (x.get("code"), x.get("title"))
-                    if key in seen:
-                        # Already have one with same code+title → merge tags/evidence if mined
-                        existing = seen[key]
-                        new_tags = set(existing.get("tags") or []) | set(x.get("tags") or [])
-                        existing["tags"] = list(new_tags)
+    except Exception:
+        use_llm = False
 
-                        # Merge evidence too (avoid duplicates)
-                        existing_ev = {(e.get("source"), e.get("locator"), e.get("snippet")) 
-                                    for e in existing.get("evidence", [])}
-                        for e in x.get("evidence", []):
-                            tup = (e.get("source"), e.get("locator"), e.get("snippet"))
-                            if tup not in existing_ev:
-                                existing.setdefault("evidence", []).append(e)
-                                existing_ev.add(tup)
-                        # 🔍 DEBUG: log when LLM-mined contribution got merged
-                        if "llm-mined" in new_tags:
-                            print(f"[DEBUG] Merged LLM-mined risk into existing item: {key}")
-                    else:
-                        seen[key] = x
-                        merged.append(x)
+    if use_llm:
+        try:
+            print("[LLM-MINER] enabled")
+            existing_codes  = {(ri.get("code") or "") for ri in risk_items_payload}
+            existing_titles = {(ri.get("title") or "") for ri in risk_items_payload}
+            llm_ctx = build_llm_context(sov_snips, loss_snips, notes_snips)  # already built above in your file
+            mined = mine_additional_risks(llm_ctx, existing_codes, existing_titles, model=cfg["llm_miner_model"])
+            print(f"[LLM-MINER] parsed items: {len(mined)}")
+            # Safety net: ensure uid exists on every mined item            
+            for m in mined:
+                if not m.get("uid"):
+                    m["uid"] = _uid_from_item(m)
 
-                risk_items_payload = merged
+            # Merge but do NOT drop base items; keep miner tags visible
+            risk_items_payload.extend(mined)
+            # prefer item with a uid; merge tags and evidence; dedupe by (code,title)
+            by_key = {}
+            for x in risk_items_payload:
+                code = x.get("code") or ""
+                title = x.get("title") or ""
+                key = (code, title)
+                prev = by_key.get(key)
 
-            except Exception as e:
-                publish("LLMRiskMinerError", {"error": str(e)})
+                if not prev:
+                    by_key[key] = x
+                    continue
 
-        # --- Attach top-k evidence to risk items (prefers location-matched) ---
+                # Choose a winner: prefer the one that has a uid
+                this_has_uid = bool(x.get("uid"))
+                prev_has_uid = bool(prev.get("uid"))
+
+                if this_has_uid and not prev_has_uid:
+                    winner, other = x, prev
+                else:
+                    winner, other = prev, x
+
+                # Merge tags (unique, order-preserving)
+                tags = list(dict.fromkeys((winner.get("tags") or []) + (other.get("tags") or [])))
+                if tags:
+                    winner["tags"] = tags
+
+                # Merge evidence (unique by (source, locator); soft-cap to 4)
+                ev = (winner.get("evidence") or []) + (other.get("evidence") or [])
+                ev_seen, ev_uniq = set(), []
+                for e in ev:
+                    t = (e.get("source"), e.get("locator"))
+                    if t in ev_seen:
+                        continue
+                    ev_seen.add(t)
+                    ev_uniq.append(e)
+                winner["evidence"] = ev_uniq[:4]
+
+                # Keep any llm_notes already present on the winner; if only the other has it, copy over
+                if not winner.get("llm_notes") and other.get("llm_notes"):
+                    winner["llm_notes"] = other["llm_notes"]
+
+                by_key[key] = winner
+
+            risk_items_payload = list(by_key.values())
+            print(f"[LLM-MINER] after merge/dedupe (uid-preferred): {len(risk_items_payload)}")
+
+        except Exception as e:
+            print("[LLM-MINER] failed, continuing with deterministic items:", repr(e))
+
+    # 7) Attach top-k evidence (never let this kill the list)
+    try:
         risk_items_payload = attach_topk_evidence_to_items(
             risk_items_payload, sov_rows, loss_rows, notes_text=notes_text, per_item_k=2
         )
-        publish("RiskProfileReady", {"count": len(risk_items_payload)})
-    except Exception:
-        risk_items_payload = []
+    except Exception as e:
+        print("[RISK] attach_topk_evidence_to_items failed:", repr(e))
+    
+
+    # Safety net: restore mined uids if any step dropped them inadvertently
+    try:
+        for it in risk_items_payload:
+            if (it.get("tags") and "llm-mined" in it["tags"]) and not it.get("uid"):
+                it["uid"] = _uid_from_item(it)  # imported from core.risk.miner
+    except Exception as e:
+        print("[RISK] uid safety-net failed:", repr(e))
+     
+
+    # ---- Emit events with finalized risk items (includes UIDs) ----
+    try:
+        # Use the run_id already in session (app sets this when you click Process)
+        run_id_for_event = st.session_state.get("run_id")
+
+        # Aggregate event with all UIDs (handy for agents/subscribers)
+        publish("RiskItemsReady", {
+            "run_id": run_id_for_event,
+            "count": len(risk_items_payload),
+            "uids": [ri.get("uid") for ri in risk_items_payload if ri.get("uid")],
+            "source": "pipeline",
+        })
+
+        # (Optional) Per-item creation events (more verbose; great for debugging/streaming)
+        for ri in risk_items_payload:
+            try:
+                publish("RiskItemCreated", {
+                    "run_id": run_id_for_event,
+                    "uid": ri.get("uid"),
+                    "code": ri.get("code"),
+                    "title": ri.get("title"),
+                    "severity": ri.get("severity"),
+                    "anchors": [
+                        (e.get("source"), e.get("locator"))
+                        for e in (ri.get("evidence") or [])
+                    ],
+                    "tags": ri.get("tags") or [],
+                    "source": "pipeline",
+                })
+            except Exception as inner_e:
+                print("[events] RiskItemCreated emit failed:", repr(inner_e))
+
+    except Exception as e:
+        print("[events] RiskItemsReady emit failed:", repr(e))
+
 
 
     # ---------------- Filters ----------------

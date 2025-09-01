@@ -2,6 +2,7 @@
 
 from typing import Dict, Any, List
 from .models import RiskItem, EvidenceRef
+import hashlib, json
 
 def _truthy(v) -> bool:
     if isinstance(v, bool):
@@ -57,7 +58,7 @@ def rules_from_bundle(bundle: Dict[str, Any]) -> List[RiskItem]:
                     if title_addr:
                         title += f" ({title_addr})"
 
-                    out.append(RiskItem(
+                    item = RiskItem(
                         code="SPRINKLER_ABSENT",
                         title=title,
                         severity="high",
@@ -70,10 +71,10 @@ def rules_from_bundle(bundle: Dict[str, Any]) -> List[RiskItem]:
                         )],
                         tags=["fire", "protection"],
                         rule_hits=["R_SOV_SprinklerAbsent"],
-                        confidence=0.75 if _falsey(val) else 0.6
-                    ))
-
-                # If explicitly true, do NOT flag. If unknown (None/blank), do NOT flag.
+                        confidence=0.75
+                    )
+                    out.append(item)
+            # If explicitly true or unknown -> do not flag, do nothing           
 
     # --- Rule 2: Open theft claim (include which location) ---
     for loss_file in bundle.get("loss_run", []) or []:
@@ -87,7 +88,7 @@ def rules_from_bundle(bundle: Dict[str, Any]) -> List[RiskItem]:
                     loc = r.get("location_id") or "unknown location"
                     addr = loc_to_addr.get(str(loc))
                     at_where = f" at {loc}" + (f" ({addr})" if addr else "")
-                    out.append(RiskItem(
+                    item = RiskItem(
                         code="OPEN_THEFT_CLAIM",
                         title=f"Open theft claim{at_where}",
                         severity="medium",
@@ -101,6 +102,10 @@ def rules_from_bundle(bundle: Dict[str, Any]) -> List[RiskItem]:
                         tags=["crime"],
                         rule_hits=["R_Loss_OpenTheft"],
                         confidence=0.7
-                    ))
+                    )                    
+                    out.append(item)
+
 
     return out
+
+

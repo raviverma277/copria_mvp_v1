@@ -8,6 +8,7 @@ if str(project_root) not in sys.path:
 
 import streamlit as st
 import json, re
+import hashlib
 
 from core.config import get_config
 from core.utils.state import get_state
@@ -24,6 +25,11 @@ from core.schemas.schema_builder import (
     generate_vnext_schema,
 )
 
+from core.schemas.contracts import RiskFeedback, make_context_signature
+from core.feedback.store import log_feedback, load_feedback
+from collections import Counter
+from core.feedback.store import load_feedback
+
 import pandas as pd 
 
 
@@ -35,7 +41,8 @@ load_dotenv()
 import uuid, os
 from core.extraction.ingest_router import select_source, from_local, from_cytora, get_bundle_auto
 from core.schemas.contracts import IngestSource
-import uuid
+from core.utils.events import publish
+
 
 
 def _norm(s: str) -> str:
@@ -223,6 +230,14 @@ with st.sidebar:
     })
     st.caption(f"SOV keys: {len(active_keys('sov'))} • Loss keys: {len(active_keys('loss_run'))}")
 
+        # --- Always show current Run ID (if set) ---
+    rid = st.session_state.get("run_id") or state.get("run_id")
+    if rid:
+        st.markdown(f"**Run ID:** `{rid}`")
+    else:
+        st.caption("No run started yet")
+
+
 st.markdown("---")  # divider
 
 # ---- Unified Controls (center) ----
@@ -294,6 +309,15 @@ with st.sidebar:
         classify_btn = st.button("Classify")
     with colB:
         process_btn = st.button("Process")
+    
+    new_run = st.button("New run", help="Start a fresh run id; keeps old feedback")
+
+    if new_run:
+        for k in ("run_id", "results", "raw_bundle"):
+            st.session_state.pop(k, None)
+            state.pop(k, None)
+        st.rerun()
+
 
     if classify_btn:
         if files:
@@ -312,7 +336,11 @@ with st.sidebar:
                 state.pop(k, None)
                 st.session_state.pop(k, None)
 
-            run_id = str(uuid.uuid4())
+            run_id = st.session_state.get("run_id") or str(uuid.uuid4())
+            st.session_state["run_id"] = run_id
+            state["run_id"] = run_id
+
+
             submission_bundle = from_cytora(run_id=run_id)  # reads sample JSON (or your configured path)
             st.sidebar.caption(f"Run: `{run_id[:8]}`")
 
@@ -355,7 +383,9 @@ with st.sidebar:
             st.session_state.pop("llm_full_make_active_persist", None)
 
             # ---- BEGIN: NEW ingestion wiring (kept as you added) ----
-            run_id = str(uuid.uuid4())
+            run_id = st.session_state.get("run_id") or str(uuid.uuid4())
+            st.session_state["run_id"] = run_id
+            state["run_id"] = run_id
             source = select_source()
 
             # Prepare args that describe your current local-parsed state
@@ -413,6 +443,21 @@ with st.sidebar:
         st.sidebar.error("Last call failed")
     else:
         st.sidebar.info("No calls yet")
+    
+    st.sidebar.subheader("📝 Feedback")
+    rid = st.session_state.get("run_id") or state.get("run_id")
+    all_fb = load_feedback(run_id=rid) if rid else []
+    c = Counter([f.verdict for f in all_fb])
+    total = sum(c.values())
+    if total:
+        bits = [f"{total} total"]
+        for k in ["confirm","dismiss","downgrade","upgrade","needs-more-info"]:
+            if c.get(k,0):
+                bits.append(f"{c[k]} {k}")
+        st.sidebar.caption(" · ".join(bits))
+    else:
+        st.sidebar.caption("No feedback yet")
+
     
     # --- Full-schema (Section F) LLM diagnostics: action, time, duration, model, tokens ---
     try:
@@ -762,13 +807,63 @@ with tabs[6]:
             st.caption("No risk items detected yet.")
         else:
             st.caption(f"{len(risk_items)} item(s) found")
-            # Optional quick filter by severity (keeps backwards-compat if field missing)
+            # --- Filters: severity + feedback status ---
             severities = sorted({(ri.get("severity") or "unknown") for ri in risk_items})
-            sel = st.multiselect("Filter by severity", options=severities, default=severities, label_visibility="collapsed")
-            to_show = [ri for ri in risk_items if (ri.get("severity") or "unknown") in sel]
+            colA, colB = st.columns([0.6, 0.4])
 
-            for ri in to_show:
+            with colA:
+                sel = st.multiselect(
+                    "Filter by severity",
+                    options=severities, default=severities, label_visibility="collapsed"
+                )
+
+            with colB:
+                fb_filter = st.radio(
+                    "Show",
+                    options=["All", "With feedback", "Needs-more-info"],
+                    index=0, horizontal=True, label_visibility="collapsed"
+                )
+
+            def _has_feedback(ri):
+                from core.feedback.store import load_feedback
+                rid = st.session_state.get("run_id")
+                uid = ri.get("uid") or ""
+                return bool(load_feedback(run_id=rid, risk_uid=uid))
+
+            def _last_verdict_is(ri, verdict):
+                from core.feedback.store import load_feedback
+                rid = st.session_state.get("run_id")
+                uid = ri.get("uid") or ""
+                fb = load_feedback(run_id=rid, risk_uid=uid)
+                return (fb and fb[-1].verdict == verdict)
+
+            filtered = [ri for ri in risk_items if (ri.get("severity") or "unknown") in sel]
+            if fb_filter == "With feedback":
+                filtered = [ri for ri in filtered if _has_feedback(ri)]
+            elif fb_filter == "Needs-more-info":
+                filtered = [ri for ri in filtered if _last_verdict_is(ri, "needs-more-info")]
+
+            to_show = filtered
+
+            def _safe_uid(ri: dict) -> str | None:
+                # Prefer pipeline-provided UID
+                u = (ri or {}).get("uid")
+                if u:
+                    return str(u)
+                # Build a stable fallback from code/title/first evidence locator
+                code  = str((ri or {}).get("code")  or "")
+                title = str((ri or {}).get("title") or "")
+                ev    = (ri or {}).get("evidence") or []
+                loc   = str(ev[0].get("locator")) if ev and isinstance(ev[0], dict) else ""
+                base  = f"{code}|{title}|{loc}"
+                h     = hashlib.sha1(base.encode("utf-8")).hexdigest() if base.strip("|") else ""
+                return h[:12] if h else None
+
+            for idx, ri in enumerate(to_show):
                 with st.container(border=True):
+                    safe_uid = _safe_uid(ri)  # may still be None if item is extremely sparse
+                    print("[DEBUG] UI risk uid:", ri.get("uid"), "| safe_uid:", safe_uid,
+                          "| code/title:", ri.get("code"), "/", ri.get("title"))
                     title = ri.get("title") or ri.get("code") or "Risk"
                     sev = (ri.get("severity") or "unknown").upper()
                     conf = ri.get("confidence", 0.0)
@@ -779,6 +874,52 @@ with tabs[6]:
                             st.caption("🔎 LLM-proposed (merged)")
                         else:
                             st.caption("🔎 LLM-proposed")
+
+                    # --- Verdict badge (only if we have a uid) ---
+                    _last_fb_list = []
+                    if safe_uid:
+                        rid_hdr = st.session_state.get("run_id") or state.get("run_id")
+                        _last_fb_list = load_feedback(run_id=rid_hdr, risk_uid=safe_uid)
+                        if not _last_fb_list:
+                            # fallback to latest feedback across any run (still only for this uid)
+                            _last_fb_list = load_feedback(run_id=None, risk_uid=safe_uid)
+
+                    if _last_fb_list:
+                        _v = _last_fb_list[-1].verdict
+                        _badge_text, _badge_color = {
+                            "confirm": ("✅ confirmed", "#16a34a"),
+                            "dismiss": ("❌ dismissed", "#ef4444"),
+                            "downgrade": ("⬇ downgraded", "#f59e0b"),
+                            "upgrade": ("⬆ upgraded", "#3b82f6"),
+                            "needs-more-info": ("❔ needs info", "#6b7280"),
+                        }.get(_v, ("", ""))
+                        if _badge_text:
+                            st.markdown(
+                                f"<div style='float:right;padding:4px 10px;border-radius:999px;"
+                                f"background:{_badge_color};color:white;font-weight:600;'>"
+                                f"{_badge_text}</div>",
+                                unsafe_allow_html=True
+                            )
+
+                    # Style the card based on last verdict (reuse the list we already fetched above)
+                    _last_v = _last_fb_list[-1].verdict if _last_fb_list else None
+
+                    if _last_v == "dismiss":
+                        st.markdown(
+                            "<div style='opacity:0.6; filter:grayscale(0.3);'>", unsafe_allow_html=True
+                        )
+                    elif _last_v == "upgrade":
+                        st.markdown(
+                            "<div style='box-shadow:0 0 0 3px rgba(59,130,246,0.35); padding:4px; border-radius:12px;'>",
+                            unsafe_allow_html=True
+                        )
+                    elif _last_v == "downgrade":
+                        st.markdown(
+                            "<div style='box-shadow:0 0 0 3px rgba(245,158,11,0.35); padding:4px; border-radius:12px;'>",
+                            unsafe_allow_html=True
+                        )
+                    # (No wrapper for confirm / needs-more-info)
+
                     st.markdown(f"**{title}**  ·  _severity_: **{sev}**  ·  _confidence_: {conf:.2f}")
                     if tags:
                         st.caption("Tags: " + ", ".join(tags))
@@ -810,6 +951,97 @@ with tabs[6]:
                                 st.code(f"{e.get('source')} | {e.get('locator')} → {e.get('snippet')}")
                                 if e.get("source_anchor"):
                                     st.caption(f"anchor: {e['source_anchor']}")
+                    
+                    # --- Underwriter feedback controls (verdict + rationale) ---
+                    has_real_uid = bool(ri.get("uid"))  # pipeline-provided uid?
+                    verdict_options = ["confirm", "dismiss", "downgrade", "upgrade", "needs-more-info"]
+
+                    with st.expander("Underwriter verdict", expanded=False):
+                        if not has_real_uid:
+                            # No stable pipeline UID → show read-only controls, do not attempt load/save
+                            st.caption("No stable ID for this item yet — feedback is disabled for now.")
+                            v_key = f"verdict_{idx}_{safe_uid or 'noid'}"
+                            r_key = f"rationale_{idx}_{safe_uid or 'noid'}"
+                            st.radio(
+                                "Verdict",
+                                options=verdict_options,
+                                index=0,
+                                horizontal=True,
+                                key=v_key,
+                                disabled=True,
+                            )
+                            st.text_area(
+                                "Rationale (optional)",
+                                value="",
+                                key=r_key,
+                                placeholder="No UID; cannot save feedback for this item yet.",
+                                disabled=True,
+                            )
+                        else:
+                            # We have a real UID → load prior feedback (current run, then any run)
+                            risk_uid = str(ri.get("uid"))
+                            run_id_for_fb = st.session_state.get("run_id") or state.get("run_id")
+
+                            prior = load_feedback(run_id=run_id_for_fb, risk_uid=risk_uid)
+                            if not prior:
+                                prior = load_feedback(run_id=None, risk_uid=risk_uid)  # fallback across runs
+                            last = prior[-1] if prior else None
+
+                            v_idx = verdict_options.index(last.verdict) if last else 0
+                            v_key = f"verdict_{idx}_{risk_uid}"
+                            r_key = f"rationale_{idx}_{risk_uid}"
+                            s_key = f"save_fb_{idx}_{risk_uid}"
+
+                            verdict = st.radio(
+                                "Verdict",
+                                options=verdict_options,
+                                index=v_idx,
+                                horizontal=True,
+                                key=v_key,
+                                help="Confirm/dismiss or adjust severity, or flag that more info is needed."
+                            )
+                            rationale = st.text_area(
+                                "Rationale (optional)",
+                                value=(last.rationale if last else ""),
+                                key=r_key,
+                                placeholder="Why? Add context, thresholds, docs to request…"
+                            )
+
+                            if st.button("Save feedback", key=s_key):
+                                fb = RiskFeedback(
+                                    run_id=run_id_for_fb or "",
+                                    risk_uid=risk_uid,
+                                    verdict=verdict,
+                                    rationale=rationale or "",
+                                    context_signature=make_context_signature(ri),
+                                    risk_snapshot=ri,
+                                )
+                                log_feedback(fb)
+                                # Emit the internal event (for future agents/learning)
+                                try:
+                                    publish("RiskFeedbackReceived", {
+                                        "run_id": run_id_for_fb,
+                                        "risk_uid": risk_uid,
+                                        "verdict": verdict,
+                                        "rationale_len": len(rationale or ""),
+                                        "context_signature": fb.context_signature,
+                                        "submitted_at": fb.submitted_at,
+                                        "source": "ui",
+                                    })
+                                except Exception as e:
+                                    print("[events] RiskFeedbackReceived emit failed:", repr(e))
+
+                                st.success("Saved.")
+                                # Refresh the card so the latest feedback shows instantly
+                                try:
+                                    st.rerun()
+                                except Exception:
+                                    st.experimental_rerun()
+
+                    # close any wrapper div we may have opened for styling
+                    if _last_v in ("dismiss", "upgrade", "downgrade"):
+                        st.markdown("</div>", unsafe_allow_html=True)
+
 
 
         st.divider()

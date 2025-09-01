@@ -2,7 +2,7 @@
 from __future__ import annotations
 from core.utils.llm_status import record_llm_call_start, record_llm_call_end
 from typing import List, Dict, Any, Set, Optional
-import os, json, re
+import os, json, re, hashlib
 from openai import OpenAI
 
 def _norm_ws(s: str) -> str:
@@ -143,6 +143,21 @@ def _collect_allowed_snippets(context: Dict[str, Any]) -> Set[str]:
             if isinstance(snip, str) and snip:
                 allowed.add(snip)
     return allowed
+
+def _uid_from_item(d: dict) -> str:
+    """
+    Compute a stable uid from (code, title, evidence anchors) to match RiskItem's logic.
+    """
+    anchors = []
+    for e in (d.get("evidence") or []):
+        src = e.get("source")
+        loc = e.get("locator")
+        if src and loc:
+            anchors.append((src, loc))
+    raw = {"code": d.get("code"), "title": d.get("title"), "anchors": anchors}
+    s = json.dumps(raw, sort_keys=True, ensure_ascii=False)
+    return hashlib.md5(s.encode("utf-8")).hexdigest()
+
 
 def mine_additional_risks(
     context: Dict[str, Any],
@@ -285,5 +300,18 @@ def mine_additional_risks(
         out.append(x)
         if len(out) >= max_items:
             break
+    # ensure every mined item has a stable uid (code + title + evidence anchors)
+    for it in out:
+        if not it.get("uid"):
+            anchors = []
+            for e in (it.get("evidence") or []):
+                src = e.get("source")
+                loc = e.get("locator")
+                if src and loc:
+                    anchors.append((src, loc))
+            raw = {"code": it.get("code"), "title": it.get("title"), "anchors": anchors}
+            s = json.dumps(raw, sort_keys=True, ensure_ascii=False)
+            it["uid"] = hashlib.md5(s.encode("utf-8")).hexdigest()
+
     print(f"[LLM-MINER] Kept {len(out)} item(s), dropped {dropped}.")       
     return out
