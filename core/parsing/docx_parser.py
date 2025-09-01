@@ -5,6 +5,7 @@ from typing import Any, Dict
 # Reuse your existing Word parser so we don't touch the rest of the pipeline
 from .word_parser import parse_word as _parse_word
 
+
 def parse_docx(f) -> Dict[str, Any]:
     """
     Thin wrapper so dispatch can call parse_docx().

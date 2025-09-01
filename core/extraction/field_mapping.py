@@ -29,19 +29,27 @@ except Exception:
 # -----------------------------------------------------------------------------
 
 SOV_NUMERIC_FIELDS = {
-    "tiv_building", "tiv_content", "tiv_bi",
-    "bi_indemnity_period_months", "stories", "year_built"
+    "tiv_building",
+    "tiv_content",
+    "tiv_bi",
+    "bi_indemnity_period_months",
+    "stories",
+    "year_built",
 }
-LOSS_NUMERIC_FIELDS = {
-    "gross_paid", "gross_outstanding", "net_paid", "net_outstanding"
-}
+LOSS_NUMERIC_FIELDS = {"gross_paid", "gross_outstanding", "net_paid", "net_outstanding"}
 
 _CROSSWALK_PATH = Path("core/schemas/crosswalk.json")
 PROV_PREFIX = "_provisional_"
 
+
 def _strip_provisional(key: str) -> str:
     """Return base name if key starts with _provisional_; else return key."""
-    return key[len(PROV_PREFIX):] if isinstance(key, str) and key.startswith(PROV_PREFIX) else key
+    return (
+        key[len(PROV_PREFIX) :]
+        if isinstance(key, str) and key.startswith(PROV_PREFIX)
+        else key
+    )
+
 
 def _to_jsonable(x):
     # pandas.Timestamp
@@ -66,6 +74,7 @@ def _to_jsonable(x):
             return str(x)
     return x
 
+
 def _json_simplify(obj):
     if isinstance(obj, dict):
         return {k: _json_simplify(v) for k, v in obj.items()}
@@ -73,13 +82,16 @@ def _json_simplify(obj):
         return [_json_simplify(v) for v in obj]
     return _to_jsonable(obj)
 
+
 def _norm_tokens(s: str) -> list[str]:
     """Tokenize to lowercase alnum chunks."""
     return re.sub(r"[^a-z0-9]+", " ", str(s or "").lower()).strip().split()
 
+
 def _norm_join(s: str) -> str:
     """Normalize to a single machine key form (tokens joined by underscores)."""
     return "_".join(_norm_tokens(s))
+
 
 def _guess_candidates(header: str, allowed_fields: list[str], n: int = 3) -> list[str]:
     """Light heuristic to suggest likely schema keys for a header."""
@@ -111,9 +123,11 @@ def _guess_candidates(header: str, allowed_fields: list[str], n: int = 3) -> lis
             out.append(s)
     return out[:n]
 
+
 # -----------------------------------------------------------------------------
 # Crosswalk I/O
 # -----------------------------------------------------------------------------
+
 
 def _read_crosswalk() -> dict:
     try:
@@ -122,13 +136,18 @@ def _read_crosswalk() -> dict:
         return {_norm_join(k): v for k, v in raw.items()}
     except Exception:
         return {}
+
+
 def _write_crosswalk(data: dict) -> None:
     """
     Write the crosswalk mapping to the default crosswalk path.
     Keeps keys/values as provided (caller should pass normalized keys if desired).
     """
     _CROSSWALK_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _CROSSWALK_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    _CROSSWALK_PATH.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
 
 def _read_crosswalk_raw(path: Path) -> dict:
     """
@@ -139,6 +158,7 @@ def _read_crosswalk_raw(path: Path) -> dict:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return {}
+
 
 def _write_crosswalk_raw(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -184,6 +204,7 @@ def migrate_crosswalk_inplace(crosswalk_path: Optional[str] = None) -> dict:
 # Basic header mapping (crosswalk-only) — used by some legacy paths
 # -----------------------------------------------------------------------------
 
+
 def resolve_headers_basic(headers: List[str]) -> Dict[str, str]:
     """
     Crosswalk-only mapping: { original_header -> canonical_field | original_header }.
@@ -197,11 +218,15 @@ def resolve_headers_basic(headers: List[str]) -> Dict[str, str]:
         mapping[h] = cw.get(key, h)
     return mapping
 
+
 # -----------------------------------------------------------------------------
 # Numeric coercions
 # -----------------------------------------------------------------------------
 
-_amount_pat = re.compile(r"[^\d\-\.\(\)]")  # strip currency symbols, commas, spaces, letters
+_amount_pat = re.compile(
+    r"[^\d\-\.\(\)]"
+)  # strip currency symbols, commas, spaces, letters
+
 
 def _coerce_amount(val: Any) -> Any:
     """
@@ -227,9 +252,14 @@ def _coerce_amount(val: Any) -> Any:
     except (InvalidOperation, ValueError):
         return val
 
+
 def _coerce_row_numbers(row: Dict[str, Any], doc_type: str) -> Dict[str, Any]:
     """Coerce known numeric fields for SOV / Loss Run."""
-    fields = SOV_NUMERIC_FIELDS if doc_type == "sov" else (LOSS_NUMERIC_FIELDS if doc_type == "loss_run" else set())
+    fields = (
+        SOV_NUMERIC_FIELDS
+        if doc_type == "sov"
+        else (LOSS_NUMERIC_FIELDS if doc_type == "loss_run" else set())
+    )
     if not fields:
         return row
     out = dict(row)
@@ -238,11 +268,15 @@ def _coerce_row_numbers(row: Dict[str, Any], doc_type: str) -> Dict[str, Any]:
             out[k] = _coerce_amount(row[k])
     return out
 
+
 # -----------------------------------------------------------------------------
 # Legacy normalize (keeps unknowns as-is) — primary flow uses resolver below
 # -----------------------------------------------------------------------------
 
-def normalize_rows(headers: List[str], rows: List[Dict[str, Any]], doc_type: str) -> List[Dict[str, Any]]:
+
+def normalize_rows(
+    headers: List[str], rows: List[Dict[str, Any]], doc_type: str
+) -> List[Dict[str, Any]]:
     """
     Apply crosswalk mapping and coerce numeric fields based on doc_type.
     Unknown headers are kept as-is.
@@ -258,9 +292,11 @@ def normalize_rows(headers: List[str], rows: List[Dict[str, Any]], doc_type: str
         out.append(norm)
     return out
 
+
 # -----------------------------------------------------------------------------
 # OpenAI client plumbing (shared with classifier style)
 # -----------------------------------------------------------------------------
+
 
 def _get_openai_client():
     api_key = os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_APIKEY")
@@ -268,14 +304,17 @@ def _get_openai_client():
         return None, None
     try:
         from openai import OpenAI  # >= 1.x
+
         return OpenAI(api_key=api_key), "responses_v1"
     except Exception:
         try:
             import openai
+
             openai.api_key = api_key
             return openai, "chat_legacy"
         except Exception:
             return None, None
+
 
 def _client_caps(client):
     """
@@ -291,21 +330,24 @@ def _client_caps(client):
         pass
     try:
         import openai  # noqa
+
         if hasattr(client, "ChatCompletion"):
             return "legacy_chat"
     except Exception:
         pass
     return "none"
 
+
 # -----------------------------------------------------------------------------
 # LLM proposal generation for unknown headers
 # -----------------------------------------------------------------------------
+
 
 def _llm_map_headers(
     doc_type: str,
     unknown_headers: List[str],
     sample_rows: List[Dict[str, Any]],
-    allowed_fields: List[str]
+    allowed_fields: List[str],
 ) -> Optional[Dict[str, Any]]:
     """
     Ask the LLM to propose mappings ONLY for 'unknown_headers'.
@@ -342,9 +384,9 @@ def _llm_map_headers(
         "- Use machine keys only (not human labels). If you truly cannot map a header, omit it from 'mappings' and do NOT guess.\n"
         "- If a header cannot be mapped, you may propose it as a new field in 'new_fields' with a machine-like field_name and short description.\n"
         "- Return STRICT JSON only:\n"
-        "{ \"doc_type\": \"sov|loss_run|questionnaire\","
-        "  \"mappings\": [ {\"source_header\":\"...\",\"target_field\":\"<MACHINE_KEY>\",\"confidence\":0-1,\"rationale\":\"...\"} ],"
-        "  \"new_fields\": [ {\"field_name\":\"...\",\"description\":\"...\",\"example\":\"...\"} ] }"
+        '{ "doc_type": "sov|loss_run|questionnaire",'
+        '  "mappings": [ {"source_header":"...","target_field":"<MACHINE_KEY>","confidence":0-1,"rationale":"..."} ],'
+        '  "new_fields": [ {"field_name":"...","description":"...","example":"..."} ] }'
     )
 
     fewshot = (
@@ -362,8 +404,8 @@ def _llm_map_headers(
         f"{allow_text}\n\n"
         f"{fewshot}\n"
         "Map ONLY these headers (candidate hints in parentheses):\n"
-        + "\n".join([f"- {h} (candidates: {hints[h]})" for h in unknown_headers]) +
-        "\n\n"
+        + "\n".join([f"- {h} (candidates: {hints[h]})" for h in unknown_headers])
+        + "\n\n"
         f"Sample rows (first 3):\n{sample_text}\n\n"
         "Return only the JSON as specified above."
     )
@@ -377,8 +419,10 @@ def _llm_map_headers(
         if caps == "chat_v1":
             resp = client.chat.completions.create(
                 model=model_chat,
-                messages=[{"role": "system", "content": system},
-                          {"role": "user",   "content": user}],
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
                 temperature=0,
                 response_format={"type": "json_object"},
             )
@@ -386,20 +430,26 @@ def _llm_map_headers(
         elif caps == "responses_v1":
             resp = client.responses.create(
                 model=model_chat,
-                input=[{"role": "system", "content": system},
-                       {"role": "user",   "content": user}],
-                temperature=0
+                input=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=0,
             )
             try:
                 content = resp.output_text
             except Exception:
-                content = getattr(resp, "content", [{"text": {"value": ""}}])[0]["text"]["value"]
+                content = getattr(resp, "content", [{"text": {"value": ""}}])[0][
+                    "text"
+                ]["value"]
         else:
             resp = client.ChatCompletion.create(
                 model=model_legacy,
-                messages=[{"role": "system", "content": system},
-                          {"role": "user",   "content": user}],
-                temperature=0
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=0,
             )
             content = resp["choices"][0]["message"]["content"]
 
@@ -409,7 +459,9 @@ def _llm_map_headers(
         # ---- DEBUG: save raw LLM content (pre-parse) ----
         try:
             state = get_state()
-            state.setdefault("proposals_raw", {}).setdefault(doc_type, []).append(content)
+            state.setdefault("proposals_raw", {}).setdefault(doc_type, []).append(
+                content
+            )
         except Exception:
             pass
 
@@ -419,7 +471,9 @@ def _llm_map_headers(
         # ---- DEBUG: save TRUE pre-filter snapshot ----
         try:
             state = get_state()
-            state.setdefault("proposals_parsed", {}).setdefault(doc_type, []).append(deepcopy(data))
+            state.setdefault("proposals_parsed", {}).setdefault(doc_type, []).append(
+                deepcopy(data)
+            )
         except Exception:
             pass
 
@@ -436,8 +490,10 @@ def _llm_map_headers(
         active_set = {_norm_join(k) for k in active_field_list}
         passed_set = {_norm_join(a) for a in allowed_fields}
         allowed_union = active_set | passed_set
-        print(f"[schema-proposal] allowed keys ({doc_type} @ {active_path.name}): "
-              f"{len(allowed_union)} keys; sample: {sorted(list(allowed_union))[:10]}")
+        print(
+            f"[schema-proposal] allowed keys ({doc_type} @ {active_path.name}): "
+            f"{len(allowed_union)} keys; sample: {sorted(list(allowed_union))[:10]}"
+        )
 
         unknown_norm = {_norm_join(h) for h in unknown_headers}
 
@@ -465,22 +521,34 @@ def _llm_map_headers(
                     m["confidence"] = conf
                     kept_mappings.append(m)
                 else:
-                    downgraded_new.append({
-                        "field_name": _norm_join(src_raw) or _norm_join(tgt_raw) or "unknown_field",
-                        "description": f"Suggested new field (low-confidence mapping {conf:.2f}). {m.get('rationale','')}".strip(),
-                        "example": None
-                    })
+                    downgraded_new.append(
+                        {
+                            "field_name": _norm_join(src_raw)
+                            or _norm_join(tgt_raw)
+                            or "unknown_field",
+                            "description": f"Suggested new field (low-confidence mapping {conf:.2f}). {m.get('rationale','')}".strip(),
+                            "example": None,
+                        }
+                    )
             else:
-                invalid_to_new.append({
-                    "field_name": _norm_join(src_raw) or _norm_join(tgt_raw) or "unknown_field",
-                    "description": f"Suggested new field (invalid mapping). {m.get('rationale','')}".strip(),
-                    "example": None
-                })
+                invalid_to_new.append(
+                    {
+                        "field_name": _norm_join(src_raw)
+                        or _norm_join(tgt_raw)
+                        or "unknown_field",
+                        "description": f"Suggested new field (invalid mapping). {m.get('rationale','')}".strip(),
+                        "example": None,
+                    }
+                )
 
         if downgraded_new:
-            print(f"[schema-proposal] downgraded {len(downgraded_new)} low-confidence mapping(s) to new_fields")
+            print(
+                f"[schema-proposal] downgraded {len(downgraded_new)} low-confidence mapping(s) to new_fields"
+            )
         if invalid_to_new:
-            print(f"[schema-proposal] moved {len(invalid_to_new)} invalid mapping(s) to new_fields")
+            print(
+                f"[schema-proposal] moved {len(invalid_to_new)} invalid mapping(s) to new_fields"
+            )
 
         data["mappings"] = kept_mappings
         data["new_fields"].extend(downgraded_new)
@@ -491,18 +559,26 @@ def _llm_map_headers(
         for h in unknown_headers:
             if _norm_join(h) not in mentioned_srcs:
                 fn = _norm_join(h)
-                if fn and fn not in {_norm_join(nf.get("field_name")) for nf in data["new_fields"]}:
+                if fn and fn not in {
+                    _norm_join(nf.get("field_name")) for nf in data["new_fields"]
+                }:
                     example = None
                     try:
-                        if sample_rows and isinstance(sample_rows[0], dict) and h in sample_rows[0]:
+                        if (
+                            sample_rows
+                            and isinstance(sample_rows[0], dict)
+                            and h in sample_rows[0]
+                        ):
                             example = _to_jsonable(sample_rows[0][h])
                     except Exception:
                         pass
-                    data["new_fields"].append({
-                        "field_name": fn,
-                        "description": "Header not in active schema; propose new field.",
-                        "example": example
-                    })
+                    data["new_fields"].append(
+                        {
+                            "field_name": fn,
+                            "description": "Header not in active schema; propose new field.",
+                            "example": example,
+                        }
+                    )
 
         return data
 
@@ -515,6 +591,7 @@ def _llm_map_headers(
 # -----------------------------------------------------------------------------
 # Primary resolver used by the pipeline (parsing safety added here)
 # -----------------------------------------------------------------------------
+
 
 def resolve_headers_with_llm(doc_type: str, headers, rows):
     """
@@ -532,9 +609,9 @@ def resolve_headers_with_llm(doc_type: str, headers, rows):
     headers = headers or []
     rows = rows or []
 
-    xwalk = _read_crosswalk()                # { normalized_header -> schema_key (maybe provisional) }
-    active_keys_list = active_keys(doc_type) # active schema keys (canonical)
-    titles_map = active_titles(doc_type)     # key -> title
+    xwalk = _read_crosswalk()  # { normalized_header -> schema_key (maybe provisional) }
+    active_keys_list = active_keys(doc_type)  # active schema keys (canonical)
+    titles_map = active_titles(doc_type)  # key -> title
     title_to_key = {_norm_join(v): k for k, v in titles_map.items() if v}
 
     # Fast maps for lookups
@@ -621,14 +698,21 @@ def resolve_headers_with_llm(doc_type: str, headers, rows):
         "normalized_rows": normalized_rows,
         "source_rows": rows,
         "provisional_fields": provisional_fields,
-        "proposals": proposals
+        "proposals": proposals,
     }
 
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Migrate crosswalk.json targets from _provisional_* → clean base.")
-    parser.add_argument("--crosswalk", default=str(_CROSSWALK_PATH), help="Path to crosswalk.json (default: core/schemas/crosswalk.json)")
+
+    parser = argparse.ArgumentParser(
+        description="Migrate crosswalk.json targets from _provisional_* → clean base."
+    )
+    parser.add_argument(
+        "--crosswalk",
+        default=str(_CROSSWALK_PATH),
+        help="Path to crosswalk.json (default: core/schemas/crosswalk.json)",
+    )
     args = parser.parse_args()
     summary = migrate_crosswalk_inplace(args.crosswalk)
     print(json.dumps(summary, indent=2))

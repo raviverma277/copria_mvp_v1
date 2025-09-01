@@ -4,6 +4,7 @@ from typing import Dict, Any, List
 from .models import RiskItem, EvidenceRef
 import hashlib, json
 
+
 def _truthy(v) -> bool:
     if isinstance(v, bool):
         return v
@@ -11,6 +12,7 @@ def _truthy(v) -> bool:
         return False
     s = str(v).strip().lower()
     return s in {"true", "1", "yes", "y"}
+
 
 def _falsey(v) -> bool:
     if isinstance(v, bool):
@@ -20,6 +22,7 @@ def _falsey(v) -> bool:
         return False
     s = str(v).strip().lower()
     return s in {"false", "0", "no", "n"}
+
 
 def rules_from_bundle(bundle: Dict[str, Any]) -> List[RiskItem]:
     """
@@ -36,7 +39,7 @@ def rules_from_bundle(bundle: Dict[str, Any]) -> List[RiskItem]:
     for sov_file in bundle.get("sov", []) or []:
         sheets = sov_file.get("sheets") or []
         for sh in sheets[:1]:
-            for r in (sh.get("rows") or []):
+            for r in sh.get("rows") or []:
                 loc = r.get("location_id")
                 if loc:
                     loc_to_addr[str(loc)] = r.get("address")
@@ -63,18 +66,29 @@ def rules_from_bundle(bundle: Dict[str, Any]) -> List[RiskItem]:
                         title=title,
                         severity="high",
                         rationale="Location appears not sprinklered, increasing fire severity.",
-                        evidence=[EvidenceRef(
-                            source="sov",
-                            locator=f"sheet=1,row={i}",
-                            snippet=str({k: r.get(k) for k in ["location_id","address","sprinklered"]}),
-                            role="primary"
-                        )],
+                        evidence=[
+                            EvidenceRef(
+                                source="sov",
+                                locator=f"sheet=1,row={i}",
+                                snippet=str(
+                                    {
+                                        k: r.get(k)
+                                        for k in [
+                                            "location_id",
+                                            "address",
+                                            "sprinklered",
+                                        ]
+                                    }
+                                ),
+                                role="primary",
+                            )
+                        ],
                         tags=["fire", "protection"],
                         rule_hits=["R_SOV_SprinklerAbsent"],
-                        confidence=0.75
+                        confidence=0.75,
                     )
                     out.append(item)
-            # If explicitly true or unknown -> do not flag, do nothing           
+            # If explicitly true or unknown -> do not flag, do nothing
 
     # --- Rule 2: Open theft claim (include which location) ---
     for loss_file in bundle.get("loss_run", []) or []:
@@ -93,19 +107,28 @@ def rules_from_bundle(bundle: Dict[str, Any]) -> List[RiskItem]:
                         title=f"Open theft claim{at_where}",
                         severity="medium",
                         rationale=f"Open theft loss{at_where} increases expected frequency/severity until mitigated.",
-                        evidence=[EvidenceRef(
-                            source="loss_run",
-                            locator=f"row={i}",
-                            snippet=str({k: r.get(k) for k in ["cause","status","location_id","incurred"]}),
-                            role="primary"
-                        )],
+                        evidence=[
+                            EvidenceRef(
+                                source="loss_run",
+                                locator=f"row={i}",
+                                snippet=str(
+                                    {
+                                        k: r.get(k)
+                                        for k in [
+                                            "cause",
+                                            "status",
+                                            "location_id",
+                                            "incurred",
+                                        ]
+                                    }
+                                ),
+                                role="primary",
+                            )
+                        ],
                         tags=["crime"],
                         rule_hits=["R_Loss_OpenTheft"],
-                        confidence=0.7
-                    )                    
+                        confidence=0.7,
+                    )
                     out.append(item)
 
-
     return out
-
-

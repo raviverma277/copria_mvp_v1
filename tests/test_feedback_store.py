@@ -3,6 +3,7 @@ from core.feedback.store import log_feedback, load_feedback
 from datetime import datetime
 import uuid
 
+
 def test_log_and_load_roundtrip(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     rid = str(uuid.uuid4())
@@ -12,7 +13,7 @@ def test_log_and_load_roundtrip(tmp_path, monkeypatch):
         verdict="confirm",
         rationale="ok",
         context_signature="sig",
-        risk_snapshot={"code":"RF_X","title":"Test","evidence":[]},
+        risk_snapshot={"code": "RF_X", "title": "Test", "evidence": []},
         submitted_at=datetime.utcnow(),
     )
     log_feedback(fb)

@@ -6,12 +6,14 @@ from email import policy
 from email.parser import BytesParser
 from email.utils import getaddresses, parseaddr
 
+
 def _norm_addr(addr: Tuple[str, str]) -> str:
     """Return a simple 'email' if present, otherwise the display name."""
     name, email = addr
     email = (email or "").strip()
     name = (name or "").strip()
     return email or name
+
 
 def _collect_recipients(msg, header: str) -> List[str]:
     """Parse To/Cc headers into a list of clean email strings."""
@@ -34,6 +36,7 @@ def _collect_recipients(msg, header: str) -> List[str]:
         uniq.append(s)
     return uniq
 
+
 def _extract_body_text(msg) -> str:
     """
     Prefer text/plain parts and skip attachments. Handle common encodings.
@@ -46,7 +49,9 @@ def _extract_body_text(msg) -> str:
         except Exception:
             payload = msg.get_payload(decode=True) or b""
             try:
-                return payload.decode(msg.get_content_charset() or "utf-8", errors="replace")
+                return payload.decode(
+                    msg.get_content_charset() or "utf-8", errors="replace"
+                )
             except Exception:
                 return payload.decode("utf-8", errors="replace")
 
@@ -65,7 +70,11 @@ def _extract_body_text(msg) -> str:
                 except Exception:
                     payload = part.get_payload(decode=True) or b""
                     try:
-                        candidates.append(payload.decode(part.get_content_charset() or "utf-8", errors="replace"))
+                        candidates.append(
+                            payload.decode(
+                                part.get_content_charset() or "utf-8", errors="replace"
+                            )
+                        )
                     except Exception:
                         candidates.append(payload.decode("utf-8", errors="replace"))
         # choose the longest non-empty candidate
@@ -74,6 +83,7 @@ def _extract_body_text(msg) -> str:
             return candidates[0] or ""
 
     return ""
+
 
 def _extract_attachments(msg) -> List[Dict[str, Any]]:
     """
@@ -93,12 +103,15 @@ def _extract_attachments(msg) -> List[Dict[str, Any]]:
             continue
         content_type = part.get_content_type()
         data = part.get_payload(decode=True) or b""
-        atts.append({
-            "filename": filename,
-            "content_type": content_type,
-            "payload": data,
-        })
+        atts.append(
+            {
+                "filename": filename,
+                "content_type": content_type,
+                "payload": data,
+            }
+        )
     return atts
+
 
 def parse_email(file) -> Dict[str, Any]:
     """

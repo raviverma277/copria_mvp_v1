@@ -1,8 +1,9 @@
-
 # Optional FastAPI app if you want service endpoints later
 from fastapi import FastAPI
+
 app = FastAPI()
+
 
 @app.get("/health")
 def health():
-    return {"status":"ok"}
+    return {"status": "ok"}

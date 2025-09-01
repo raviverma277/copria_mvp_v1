@@ -16,3 +16,11 @@ events.jsonl
 # OS / IDE
 .vscode/
 .idea/
+
+# Extra safety for local secrets & artifacts
+*.jsonl
+*.log
+*.tmp
+*.bak
+secrets.toml
+

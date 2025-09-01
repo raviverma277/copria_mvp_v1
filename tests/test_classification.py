@@ -10,9 +10,17 @@ if str(ROOT) not in sys.path:
 
 from core.parsing.dispatch import parse_files
 
+
 def main():
-    parser = argparse.ArgumentParser(description="Classify sample documents into functional buckets.")
-    parser.add_argument("--samples-dir", type=str, default=str(Path(ROOT) / "data"), help="Folder with sample docs (default: ./data)")
+    parser = argparse.ArgumentParser(
+        description="Classify sample documents into functional buckets."
+    )
+    parser.add_argument(
+        "--samples-dir",
+        type=str,
+        default=str(Path(ROOT) / "data"),
+        help="Folder with sample docs (default: ./data)",
+    )
     args = parser.parse_args()
 
     samples = Path(args.samples_dir)
@@ -23,7 +31,13 @@ def main():
     # Open files
     uploads = []
     for p in samples.iterdir():
-        if p.is_file() and p.suffix.lower() in {".pdf",".xlsx",".xls",".eml",".msg"}:
+        if p.is_file() and p.suffix.lower() in {
+            ".pdf",
+            ".xlsx",
+            ".xls",
+            ".eml",
+            ".msg",
+        }:
             uploads.append(open(p, "rb"))
 
     bundle = parse_files(uploads)
@@ -36,22 +50,41 @@ def main():
             pass
 
     # Summary
-    def count(k): return len(bundle.get(k, []))
+    def count(k):
+        return len(bundle.get(k, []))
+
     print("=== Classification Summary ===")
-    for key in ["submission","sov","loss_run","questionnaire","email_body","other"]:
+    for key in [
+        "submission",
+        "sov",
+        "loss_run",
+        "questionnaire",
+        "email_body",
+        "other",
+    ]:
         print(f"  {key}: {count(key)}")
 
     # Details
     print("\n=== Details ===")
-    for key in ["submission","sov","loss_run","questionnaire","email_body","other"]:
+    for key in [
+        "submission",
+        "sov",
+        "loss_run",
+        "questionnaire",
+        "email_body",
+        "other",
+    ]:
         print(f"\n-- {key.upper()} --")
         for i, item in enumerate(bundle.get(key, []), 1):
-            name = item.get("filename","(no name)")
+            name = item.get("filename", "(no name)")
             meta = item.get("meta", {})
             page_tags = item.get("page_tags", [])
             print(f"[{i}] {name} | meta={meta}")
             if page_tags:
-                tops = [f"p{t.get('page')}:{t.get('type')}({round(float(t.get('confidence',0)),2)})" for t in page_tags[:8]]
+                tops = [
+                    f"p{t.get('page')}:{t.get('type')}({round(float(t.get('confidence',0)),2)})"
+                    for t in page_tags[:8]
+                ]
                 more = " ..." if len(page_tags) > 8 else ""
                 print("   page_tags:", ", ".join(tops) + more)
 
@@ -60,6 +93,7 @@ def main():
     with open(out, "w", encoding="utf-8") as f:
         json.dump(bundle, f, indent=2, default=str)
     print(f"\nSaved details to: {out}")
+
 
 if __name__ == "__main__":
     main()

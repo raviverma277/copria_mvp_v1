@@ -1,4 +1,3 @@
-
 import json, pathlib
 from core.schemas.active import get_active_name, SCHEMA_DIR
 

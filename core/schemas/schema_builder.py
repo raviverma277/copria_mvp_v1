@@ -17,7 +17,9 @@ from datetime import datetime as _dt
 
 
 SCHEMA_DIR = Path("core/schemas/json")
-ACTIVE_PTR = Path("core/schemas/active_schema.json")  # {"sov":"...", "loss_run":"...", ...}
+ACTIVE_PTR = Path(
+    "core/schemas/active_schema.json"
+)  # {"sov":"...", "loss_run":"...", ...}
 
 PROV_PREFIX = "_provisional_"
 
@@ -26,6 +28,7 @@ PROV_PREFIX = "_provisional_"
 # ---- LLM diagnostics (for UI) ----
 _LLM_LAST_ERROR = None
 
+
 def _dbg(msg: str):
     # lightweight console logging for Streamlit's terminal
     try:
@@ -33,19 +36,24 @@ def _dbg(msg: str):
     except Exception:
         pass
 
+
 def _set_llm_last_error(msg: str):
     global _LLM_LAST_ERROR
     _LLM_LAST_ERROR = msg
 
+
 def get_llm_last_error() -> str | None:
     return _LLM_LAST_ERROR
+
 
 # ---- LLM meta (model/usage) for UI diagnostics ----
 _LLM_LAST_META = None
 
+
 def _set_llm_last_meta(meta):
     global _LLM_LAST_META
     _LLM_LAST_META = meta
+
 
 def get_llm_last_meta():
     return _LLM_LAST_META
@@ -54,42 +62,53 @@ def get_llm_last_meta():
 def _read_json(p: Path) -> Dict[str, Any]:
     return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
 
+
 def _write_json(p: Path, obj: Dict[str, Any]) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
 
+
 # -------- active pointer helpers --------
+
 
 def _get_active_pointer() -> Dict[str, str]:
     return _read_json(ACTIVE_PTR) if ACTIVE_PTR.exists() else {}
 
+
 def _set_active_pointer(ptr: Dict[str, str]) -> None:
     _write_json(ACTIVE_PTR, ptr)
+
 
 def get_active_name(doc_type: str) -> str:
     """Return active filename for a doc type (fallback to <doc_type>.schema.json)."""
     ptr = _get_active_pointer()
     return ptr.get(doc_type, f"{doc_type}.schema.json")
 
+
 def _set_active_name(doc_type: str, filename: str) -> None:
     ptr = _get_active_pointer()
     ptr[doc_type] = filename
     _set_active_pointer(ptr)
 
+
 # -------- schema-shape helpers --------
+
 
 def _get_props_node(schema: Dict[str, Any]) -> Tuple[Dict[str, Any], str]:
     """
     Return (properties_dict, shape) where shape is 'array' or 'object'.
     If neither exists, initialize object.properties and return it.
     """
-    if isinstance(schema.get("items"), dict) and isinstance(schema["items"].get("properties"), dict):
+    if isinstance(schema.get("items"), dict) and isinstance(
+        schema["items"].get("properties"), dict
+    ):
         return schema["items"]["properties"], "array"
     if isinstance(schema.get("properties"), dict):
         return schema["properties"], "object"
     # init object.properties if nothing present
     schema.setdefault("properties", {})
     return schema["properties"], "object"
+
 
 def _set_props_node(schema: Dict[str, Any], props: Dict[str, Any], shape: str) -> None:
     if shape == "array":
@@ -98,13 +117,22 @@ def _set_props_node(schema: Dict[str, Any], props: Dict[str, Any], shape: str) -
     else:
         schema["properties"] = props
 
+
 # -------- NEW: utilities to strip provisional and merge safely --------
+
 
 def _strip_provisional(name: str) -> str:
     """Return clean field name (without _provisional_ prefix)."""
-    return name[len(PROV_PREFIX):] if isinstance(name, str) and name.startswith(PROV_PREFIX) else name
+    return (
+        name[len(PROV_PREFIX) :]
+        if isinstance(name, str) and name.startswith(PROV_PREFIX)
+        else name
+    )
 
-def _merge_new_properties(schema: Dict[str, Any], new_props: Dict[str, Any]) -> Dict[str, Any]:
+
+def _merge_new_properties(
+    schema: Dict[str, Any], new_props: Dict[str, Any]
+) -> Dict[str, Any]:
     """
     Deep copy schema and merge properties, stripping _provisional_ from keys.
     If a clean key already exists, the provisional duplicate is ignored.
@@ -129,7 +157,9 @@ def _merge_new_properties(schema: Dict[str, Any], new_props: Dict[str, Any]) -> 
     _set_props_node(s, props, shape)
     return s
 
+
 # --- ADD directly under _merge_new_properties(...) ---
+
 
 def _rename_provisional_keys_inplace(schema: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -149,7 +179,11 @@ def _rename_provisional_keys_inplace(schema: Dict[str, Any]) -> Dict[str, Any]:
             to_move.append((k, base))
 
     for old, new in to_move:
-        if new in props and isinstance(props[new], dict) and isinstance(props[old], dict):
+        if (
+            new in props
+            and isinstance(props[new], dict)
+            and isinstance(props[old], dict)
+        ):
             # prefer existing clean, but bring over any missing keys
             merged = {**props[old], **props[new]}  # keep clean's values on conflict
             props[new] = merged
@@ -159,6 +193,7 @@ def _rename_provisional_keys_inplace(schema: Dict[str, Any]) -> Dict[str, Any]:
 
     _set_props_node(schema, props, shape)
     return schema
+
 
 def _coerce_new_fields(new_fields: Any) -> Dict[str, Any]:
     """
@@ -195,7 +230,9 @@ def _coerce_new_fields(new_fields: Any) -> Dict[str, Any]:
     if isinstance(new_fields, list):
         for nf in new_fields:
             if isinstance(nf, dict):
-                key = _strip_provisional((nf.get("field_name") or nf.get("name") or "").strip())
+                key = _strip_provisional(
+                    (nf.get("field_name") or nf.get("name") or "").strip()
+                )
                 if not key:
                     continue
                 # allow explicit property dict or synthesize from simple fields
@@ -204,7 +241,11 @@ def _coerce_new_fields(new_fields: Any) -> Dict[str, Any]:
                     or nf.get("schema")
                     or {
                         "type": nf.get("type", "string"),
-                        **({"description": nf["description"]} if nf.get("description") else {}),
+                        **(
+                            {"description": nf["description"]}
+                            if nf.get("description")
+                            else {}
+                        ),
                         **({"examples": nf["examples"]} if nf.get("examples") else {}),
                         **({"enum": nf["enum"]} if nf.get("enum") else {}),
                     }
@@ -228,6 +269,7 @@ def _coerce_new_fields(new_fields: Any) -> Dict[str, Any]:
 
 # -------- flatten & diff (for preview UI) --------
 
+
 def _flatten_prop_types(schema: Dict[str, Any]) -> Dict[str, str]:
     props, _ = _get_props_node(schema)
     out: Dict[str, str] = {}
@@ -235,13 +277,17 @@ def _flatten_prop_types(schema: Dict[str, Any]) -> Dict[str, str]:
         out[k] = v.get("type", "any") if isinstance(v, dict) else "any"
     return out
 
+
 def _compute_diff(old: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]:
     o = _flatten_prop_types(old)
     n = _flatten_prop_types(new)
     added = {k: n[k] for k in n.keys() - o.keys()}
     removed = {k: o[k] for k in o.keys() - n.keys()}
-    changed = {k: {"from": o[k], "to": n[k]} for k in o.keys() & n.keys() if o[k] != n[k]}
+    changed = {
+        k: {"from": o[k], "to": n[k]} for k in o.keys() & n.keys() if o[k] != n[k]
+    }
     return {"added": added, "removed": removed, "changed": changed}
+
 
 # ========= LLM enrichment for JSON-Schema properties =========
 import os
@@ -266,7 +312,10 @@ Sample values:
 Return ONLY the JSON object.
 """
 
-def _llm_property_for_field(doc_type: str, field: str, samples: List[Any]) -> Dict[str, Any]:
+
+def _llm_property_for_field(
+    doc_type: str, field: str, samples: List[Any]
+) -> Dict[str, Any]:
     """
     Best-effort call to LLM to infer a JSON-Schema property for a field given example values.
     Falls back to {"type": "string"} on any error.
@@ -274,7 +323,7 @@ def _llm_property_for_field(doc_type: str, field: str, samples: List[Any]) -> Di
     try:
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
-            _set_llm_last_error("Missing OPENAI_API_KEY") 
+            _set_llm_last_error("Missing OPENAI_API_KEY")
             return {"type": "string"}  # no-op if key missing
 
         # Minimal OpenAI client; replace with your existing wrapper if you have one.
@@ -282,11 +331,11 @@ def _llm_property_for_field(doc_type: str, field: str, samples: List[Any]) -> Di
             from openai import OpenAI
         except Exception as e:
             _set_llm_last_error(f"OpenAI import failed: {e}")
-            return {"type": "string"} 
-         # or {"type":"object","properties":{}}
+            return {"type": "string"}
+        # or {"type":"object","properties":{}}
         client = OpenAI(api_key=api_key)
         prompt = _render_schema_prompt(doc_type, field, samples or [])
-        
+
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
@@ -294,6 +343,7 @@ def _llm_property_for_field(doc_type: str, field: str, samples: List[Any]) -> Di
         )
         txt = (resp.choices[0].message.content or "").strip()
         import json
+
         if "```" in txt:
             txt = txt.split("```")[-2]  # take fenced block if present
         obj = json.loads(txt)
@@ -304,13 +354,14 @@ def _llm_property_for_field(doc_type: str, field: str, samples: List[Any]) -> Di
             obj["type"] = "string"
         return obj
     except Exception as e:
-         _set_llm_last_error(f"OpenAI call failed: {e}")
-         return {"type": "string"}
+        _set_llm_last_error(f"OpenAI call failed: {e}")
+        return {"type": "string"}
+
 
 def enrich_properties_with_llm(
     doc_type: str,
     queued_props: Dict[str, Dict[str, Any]],
-    field_samples: Dict[str, List[Any]]
+    field_samples: Dict[str, List[Any]],
 ) -> Dict[str, Dict[str, Any]]:
     """
     For every queued field with missing/minimal property, call LLM to infer a better property.
@@ -341,6 +392,7 @@ def enrich_properties_with_llm(
             out[field] = prop
     return out
 
+
 # ========= LLM full-schema draft (experimental) =========
 def _guess_py_type(val: Any) -> str:
     """Very lightweight type guess for prompt context."""
@@ -357,6 +409,7 @@ def _guess_py_type(val: Any) -> str:
     if len(s) in (10, 19, 20, 24) and s[4] == "-" and s[7] == "-":
         return "date/date-time?"
     return "string"
+
 
 # ---- JSON sanitization helpers for prompts ----
 from datetime import date, datetime
@@ -384,7 +437,9 @@ def _to_jsonable(val):
         return val.item()
 
     # pandas Timestamp / datetime / date -> ISO strings
-    if (_pd is not None and isinstance(val, _pd.Timestamp)) or isinstance(val, (datetime, date)):
+    if (_pd is not None and isinstance(val, _pd.Timestamp)) or isinstance(
+        val, (datetime, date)
+    ):
         try:
             # Prefer date-time with 'Z' for UTC, else plain ISO
             iso = val.isoformat()
@@ -433,7 +488,9 @@ def _guess_py_type(val) -> str:
     if isinstance(val, float):
         return "number"
     # pandas Timestamp / datetime / date
-    if (_pd is not None and isinstance(val, _pd.Timestamp)) or isinstance(val, (datetime, date)):
+    if (_pd is not None and isinstance(val, _pd.Timestamp)) or isinstance(
+        val, (datetime, date)
+    ):
         return "date-time"
     # strings that look like ISO dates
     s = str(val).strip()
@@ -441,6 +498,7 @@ def _guess_py_type(val) -> str:
         # e.g., 2024-06-01 / 2024-06-01T00:00:00Z
         return "date/date-time?"
     return "string"
+
 
 def polish_full_schema_draft(doc_type: str, draft: dict) -> dict:
     if not isinstance(draft, dict):
@@ -457,7 +515,7 @@ def polish_full_schema_draft(doc_type: str, draft: dict) -> dict:
         renamed = {}
         for k, v in list(props.items()):
             if isinstance(k, str) and k.startswith("_provisional_"):
-                base = k[len("_provisional_"):]
+                base = k[len("_provisional_") :]
                 if base and base not in props and base not in renamed:
                     renamed[base] = v
                     del props[k]
@@ -486,8 +544,14 @@ def polish_full_schema_draft(doc_type: str, draft: dict) -> dict:
     def _normalize_bool_examples(p):
         ex = p.get("examples")
         if isinstance(ex, list):
-            has_t = any(x is True or (isinstance(x, str) and x.strip().lower() == "true") for x in ex)
-            has_f = any(x is False or (isinstance(x, str) and x.strip().lower() == "false") for x in ex)
+            has_t = any(
+                x is True or (isinstance(x, str) and x.strip().lower() == "true")
+                for x in ex
+            )
+            has_f = any(
+                x is False or (isinstance(x, str) and x.strip().lower() == "false")
+                for x in ex
+            )
             if has_t or has_f:
                 p["examples"] = ([True] if has_t else []) + ([False] if has_f else [])
 
@@ -507,7 +571,10 @@ def polish_full_schema_draft(doc_type: str, draft: dict) -> dict:
             p.setdefault("pattern", "^[A-Z]{2}$")
         if k == "roof_age_years" and t in ("integer", "number"):
             p.setdefault("minimum", 0)
-        if k in ("tiv_building", "tiv_content", "tiv_bi") and t in ("integer", "number"):
+        if k in ("tiv_building", "tiv_content", "tiv_bi") and t in (
+            "integer",
+            "number",
+        ):
             p.setdefault("minimum", 0)
 
         _dedup_examples(p)
@@ -516,7 +583,13 @@ def polish_full_schema_draft(doc_type: str, draft: dict) -> dict:
 
         # Loss-run specifics (kept if you have them already)
         if doc_type == "loss_run":
-            if k in ("gross_paid", "gross_outstanding", "incurred", "net_paid", "net_outstanding") and t in ("integer", "number"):
+            if k in (
+                "gross_paid",
+                "gross_outstanding",
+                "incurred",
+                "net_paid",
+                "net_outstanding",
+            ) and t in ("integer", "number"):
                 p.setdefault("minimum", 0)
             if k == "date_of_loss" and t == "string":
                 p.setdefault("format", "date")
@@ -530,7 +603,6 @@ def polish_full_schema_draft(doc_type: str, draft: dict) -> dict:
                 p.setdefault("enum", ["Open", "Closed"])
 
     return draft
-
 
 
 def _extract_first_json_object(txt: str) -> str | None:
@@ -583,7 +655,9 @@ def _extract_first_json_object(txt: str) -> str | None:
     return None  # no complete object found
 
 
-def summarize_rows_for_prompt(rows: List[Dict[str, Any]], max_fields: int = 60, samples_per_field: int = 10) -> Dict[str, Dict[str, Any]]:
+def summarize_rows_for_prompt(
+    rows: List[Dict[str, Any]], max_fields: int = 60, samples_per_field: int = 10
+) -> Dict[str, Dict[str, Any]]:
     """
     Create a compact summary per field for the LLM prompt:
       { field: { "sample_types": [...], "examples": [...], "non_null_ratio": 0.87 } }
@@ -621,7 +695,9 @@ def summarize_rows_for_prompt(rows: List[Dict[str, Any]], max_fields: int = 60, 
     return _json_sanitize_field_summaries(summary)
 
 
-def _render_full_schema_prompt(doc_type: str, field_summaries: Dict[str, Dict[str, Any]]) -> str:
+def _render_full_schema_prompt(
+    doc_type: str, field_summaries: Dict[str, Dict[str, Any]]
+) -> str:
     """
     Compact instruction for the LLM: return a JSON Schema object with 'type': 'object' and a 'properties' map.
     """
@@ -643,11 +719,12 @@ Field context:
 Return ONLY the JSON object (no extra text).
 """
 
+
 def llm_generate_full_schema(
     doc_type: str,
     rows: List[Dict[str, Any]],
     max_fields: int = 60,
-    samples_per_field: int = 10
+    samples_per_field: int = 10,
 ) -> Dict[str, Any]:
     """
     Build field summaries from rows and ask the LLM to produce a full JSON Schema draft:
@@ -659,6 +736,7 @@ def llm_generate_full_schema(
     - Hardened parsing with clear LLM diagnostics via _set_llm_last_error
     Falls back to an empty 'properties' map on failure.
     """
+
     # --- helper: extract first complete top-level JSON object from text ---
     def _extract_first_json_object(txt: str) -> Optional[str]:
         if not txt:
@@ -701,7 +779,9 @@ def llm_generate_full_schema(
         return None
 
     # Summarize and sanitize example values for the prompt
-    summaries = summarize_rows_for_prompt(rows, max_fields=max_fields, samples_per_field=samples_per_field)
+    summaries = summarize_rows_for_prompt(
+        rows, max_fields=max_fields, samples_per_field=samples_per_field
+    )
     if not summaries:
         _set_llm_last_error(None)
         _set_llm_last_meta(None)
@@ -783,24 +863,32 @@ def llm_generate_full_schema(
         return {"type": "object", "properties": {}}
 
 
-def propose_full_schema_from_llm(doc_type: str, rows: List[Dict[str, Any]], max_fields: int = 60, samples_per_field: int = 10) -> Tuple[str, Dict[str, Any], Dict[str, Any]]:
+def propose_full_schema_from_llm(
+    doc_type: str,
+    rows: List[Dict[str, Any]],
+    max_fields: int = 60,
+    samples_per_field: int = 10,
+) -> Tuple[str, Dict[str, Any], Dict[str, Any]]:
     """
     Return (new_file_name, current_active_schema, llm_draft_schema)
     The draft is a full schema (object + properties) synthesized by the LLM from data rows.
     """
-    _, current_schema = load_active_schema(doc_type)  # you already have this import in this file
-    draft = llm_generate_full_schema(doc_type, rows, max_fields=max_fields, samples_per_field=samples_per_field)
+    _, current_schema = load_active_schema(
+        doc_type
+    )  # you already have this import in this file
+    draft = llm_generate_full_schema(
+        doc_type, rows, max_fields=max_fields, samples_per_field=samples_per_field
+    )
     draft = polish_full_schema_draft(doc_type, draft)
     print("polish_full_schema_draft doc_type =", doc_type)
 
-    
-    ts = _dt.now().strftime("%Y-%m-%d_%H%M%S")    
+    ts = _dt.now().strftime("%Y-%m-%d_%H%M%S")
     new_name = f"{doc_type}.schema.llm-draft.v{ts}.json"
     return new_name, current_schema, draft
 
 
-
 # -------- public: active schema loader (compat) --------
+
 
 def load_active_schema(doc_type: str) -> Tuple[Path, Dict[str, Any]]:
     """(compat) Return (path, json) for the active schema of a given doc type."""
@@ -808,11 +896,12 @@ def load_active_schema(doc_type: str) -> Tuple[Path, Dict[str, Any]]:
     path = SCHEMA_DIR / name
     return path, _read_json(path)
 
+
 # -------- public: propose (compat) --------
 
+
 def propose_vnext_schema(
-    doc_type: str,
-    approved_new_fields: Any  # accepts dict OR list OR str
+    doc_type: str, approved_new_fields: Any  # accepts dict OR list OR str
 ) -> Tuple[str, Dict[str, Any], Dict[str, Any]]:
     """
     (compat) Returns (new_file_name, current_schema, vnext_schema).
@@ -834,14 +923,19 @@ def propose_vnext_schema(
 
 # -------- public: writer (compat) --------
 
-def write_vnext_and_point_active(doc_type: str, new_name: str, vnext_schema: Dict[str, Any], make_active: bool) -> Path:
+
+def write_vnext_and_point_active(
+    doc_type: str, new_name: str, vnext_schema: Dict[str, Any], make_active: bool
+) -> Path:
     dest = SCHEMA_DIR / new_name
     _write_json(dest, vnext_schema)
     if make_active:
         _set_active_name(doc_type, new_name)
     return dest
 
+
 # --- ADD after write_vnext_and_point_active(...) and before preview_vnext_schema(...) ---
+
 
 def migrate_active_schema(doc_type: str) -> Dict[str, Any]:
     """
@@ -895,7 +989,10 @@ def migrate_all_active_schemas(doc_types: Optional[List[str]] = None) -> Dict[st
 
 # -------- new: preview & generate vNext --------
 
-def preview_vnext_schema(doc_type: str, new_properties: Optional[Dict[str, Any]] = None) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+
+def preview_vnext_schema(
+    doc_type: str, new_properties: Optional[Dict[str, Any]] = None
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
     Build an in-memory vNext by merging `new_properties` with the active schema.
     Strips _provisional_ prefixes and returns (merged_schema_json, diff_dict).
@@ -903,6 +1000,7 @@ def preview_vnext_schema(doc_type: str, new_properties: Optional[Dict[str, Any]]
     _, active = load_active_schema(doc_type)
     merged = _merge_new_properties(active, new_properties or {})
     return merged, _compute_diff(active, merged)
+
 
 def generate_vnext_schema(
     doc_type: str,
@@ -934,18 +1032,23 @@ def generate_vnext_schema(
     # Best-effort: remove these fields from the pending new_fields queue
     try:
         from core.schemas.proposals_store import remove_new_fields
+
         field_names = list((new_properties or {}).keys())
         # Normalize in case UI passed provisional names
-        field_names = [ _strip_provisional(n) for n in field_names ]
+        field_names = [_strip_provisional(n) for n in field_names]
         if field_names:
             removed = remove_new_fields(doc_type, field_names)
-            print(f"[schema-builder] removed {removed} queued new_field(s) for {doc_type}")
+            print(
+                f"[schema-builder] removed {removed} queued new_field(s) for {doc_type}"
+            )
     except Exception as e:
         print(f"[schema-builder] warning: could not remove queued new_fields: {e}")
 
     return vnext_name, vnext_path
 
+
 # -------- small helper to build a property from UI inputs --------
+
 
 def build_property(
     field_name: str,
@@ -965,13 +1068,20 @@ def build_property(
         prop["enum"] = enum
     return {clean: prop}
 
+
 # --- ADD AT END OF FILE ---
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Migrate ACTIVE schema(s): rename _provisional_* properties to clean keys.")
-    parser.add_argument("--doc", action="append", dest="docs",
-                        help="Doc type(s) to migrate (e.g., --doc sov --doc loss_run). If omitted, all active schemas are migrated.")
+
+    parser = argparse.ArgumentParser(
+        description="Migrate ACTIVE schema(s): rename _provisional_* properties to clean keys."
+    )
+    parser.add_argument(
+        "--doc",
+        action="append",
+        dest="docs",
+        help="Doc type(s) to migrate (e.g., --doc sov --doc loss_run). If omitted, all active schemas are migrated.",
+    )
     args = parser.parse_args()
     result = migrate_all_active_schemas(args.docs)
     print(json.dumps(result, indent=2, ensure_ascii=False))
-

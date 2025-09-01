@@ -4,6 +4,7 @@ from typing import Dict, List, Any
 
 _CURR_RE = re.compile(r"[^\d\.\-]")
 
+
 def _to_bool(v: Any) -> bool | None:
     if v is None:
         return None
@@ -13,6 +14,7 @@ def _to_bool(v: Any) -> bool | None:
     if s in ("no", "n", "false", "f", "0"):
         return False
     return None  # leave as None if ambiguous
+
 
 def _to_float(v: Any) -> float | None:
     if v is None or str(v).strip() == "":
@@ -24,8 +26,10 @@ def _to_float(v: Any) -> float | None:
     except Exception:
         return None
 
+
 def _clean_str(v: Any) -> Any:
     return v.strip() if isinstance(v, str) else v
+
 
 def normalize_sov_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
@@ -71,6 +75,7 @@ def normalize_sov_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
         out.append(rr)
     return out
+
 
 def normalize_loss_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []

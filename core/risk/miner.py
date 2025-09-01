@@ -5,8 +5,10 @@ from typing import List, Dict, Any, Set, Optional
 import os, json, re, hashlib
 from openai import OpenAI
 
+
 def _norm_ws(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "").strip())
+
 
 def _snippet_matches(snippet: str, allowed_snippets: set[str]) -> bool:
     """
@@ -21,6 +23,7 @@ def _snippet_matches(snippet: str, allowed_snippets: set[str]) -> bool:
         if ns == na or ns.startswith(na) or na.startswith(ns):
             return True
     return False
+
 
 def _safe_get_text(resp) -> str:
     """
@@ -56,6 +59,7 @@ def _safe_get_text(resp) -> str:
     # Final fallback: string-ify
     return str(resp)
 
+
 def _extract_json_array(s: str) -> Optional[str]:
     """
     Extract the first JSON array substring from text.
@@ -76,7 +80,7 @@ def _extract_json_array(s: str) -> Optional[str]:
     start = s.find("[")
     end = s.rfind("]")
     if start != -1 and end != -1 and end > start:
-        candidate = s[start:end+1].strip()
+        candidate = s[start : end + 1].strip()
         # quick sanity: must start with '['
         if candidate.startswith("["):
             return candidate
@@ -91,29 +95,36 @@ def _extract_json_array(s: str) -> Optional[str]:
             elif s[i] == "]":
                 depth -= 1
                 if depth == 0:
-                    return s[start:i+1].strip()
+                    return s[start : i + 1].strip()
 
     return None
 
+
 SYSTEM = (
-  "You are a commercial property underwriting aide. "
-  "Your job is to propose a few NEW, short, well-grounded risk items based ONLY on the provided snippets. "
-  "Never invent facts; only infer if strongly supported by the text. "
-  "Each item MUST cite exactly one provided snippet (copy snippet text EXACTLY). "
-  "Return ONLY a bare JSON array with up to 3 items; no prose, no code fences."
+    "You are a commercial property underwriting aide. "
+    "Your job is to propose a few NEW, short, well-grounded risk items based ONLY on the provided snippets. "
+    "Never invent facts; only infer if strongly supported by the text. "
+    "Each item MUST cite exactly one provided snippet (copy snippet text EXACTLY). "
+    "Return ONLY a bare JSON array with up to 3 items; no prose, no code fences."
 )
 
 # Minimal schema guard
-_ALLOWED_SEVERITIES = {"low","medium","high","critical"}
+_ALLOWED_SEVERITIES = {"low", "medium", "high", "critical"}
+
 
 def _valid_item(x: dict, allowed_snippets: set[str]) -> bool:
-    if not isinstance(x, dict): 
+    if not isinstance(x, dict):
         return False
     # required scalars
-    code = x.get("code"); title = x.get("title"); sev = x.get("severity")
-    if not isinstance(code, str) or not code.strip(): return False
-    if not isinstance(title, str) or not title.strip(): return False
-    if not isinstance(sev, str) or sev.lower() not in _ALLOWED_SEVERITIES: return False
+    code = x.get("code")
+    title = x.get("title")
+    sev = x.get("severity")
+    if not isinstance(code, str) or not code.strip():
+        return False
+    if not isinstance(title, str) or not title.strip():
+        return False
+    if not isinstance(sev, str) or sev.lower() not in _ALLOWED_SEVERITIES:
+        return False
 
     # evidence: allow dict or list; coerce to list here
     ev = x.get("evidence")
@@ -126,7 +137,7 @@ def _valid_item(x: dict, allowed_snippets: set[str]) -> bool:
     # at least one evidence must cite an allowed snippet
     cited_ok = False
     for e in ev:
-        if not isinstance(e, dict): 
+        if not isinstance(e, dict):
             continue
         snip = e.get("snippet")
         if isinstance(snip, str) and _snippet_matches(snip, allowed_snippets):
@@ -137,19 +148,20 @@ def _valid_item(x: dict, allowed_snippets: set[str]) -> bool:
 
 def _collect_allowed_snippets(context: Dict[str, Any]) -> Set[str]:
     allowed = set()
-    for sec in ("sov","loss","notes"):
+    for sec in ("sov", "loss", "notes"):
         for d in context.get(sec, []) or []:
             snip = d.get("snippet")
             if isinstance(snip, str) and snip:
                 allowed.add(snip)
     return allowed
 
+
 def _uid_from_item(d: dict) -> str:
     """
     Compute a stable uid from (code, title, evidence anchors) to match RiskItem's logic.
     """
     anchors = []
-    for e in (d.get("evidence") or []):
+    for e in d.get("evidence") or []:
         src = e.get("source")
         loc = e.get("locator")
         if src and loc:
@@ -165,7 +177,7 @@ def mine_additional_risks(
     existing_titles: Set[str],
     model: str = os.environ.get("LLM_MINER_MODEL", "gpt-4o-mini"),
     temperature: float = 0.2,
-    max_items: int = 6
+    max_items: int = 6,
 ) -> List[Dict[str, Any]]:
     """
     context: {"sov":[{locator,snippet}], "loss":[...], "notes":[...]}
@@ -189,10 +201,10 @@ def mine_additional_risks(
             "title": "string, human readable",
             "severity": "one of: low|medium|high|critical",
             "rationale": "string, <=200 chars",
-            "evidence": "list of {source:'sov|loss_run|notes', locator:'...', snippet:'<exact from provided>'}"
-        }
+            "evidence": "list of {source:'sov|loss_run|notes', locator:'...', snippet:'<exact from provided>'}",
+        },
     }
-    
+
     # --- Call the LLM with robust fallback (no json_schema in this SDK) ------
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
@@ -218,7 +230,7 @@ def mine_additional_risks(
             model=model,
             input=[
                 {"role": "system", "content": SYSTEM},
-                {"role": "user",   "content": user_payload},
+                {"role": "user", "content": user_payload},
             ],
             temperature=temperature,
             # Give it more room so the array isn't truncated mid-JSON
@@ -245,9 +257,11 @@ def mine_additional_risks(
         if not isinstance(arr, list):
             return []
     except Exception as e:
-        print("[LLM-MINER] Error parsing JSON array:", e, "\nPayload was:", json_str[:400])
+        print(
+            "[LLM-MINER] Error parsing JSON array:", e, "\nPayload was:", json_str[:400]
+        )
         return []
- 
+
     # --- normalize common model quirks before validation ---
     for x in arr:
         # severity to lowercase
@@ -259,38 +273,44 @@ def mine_additional_risks(
             x["evidence"] = [x["evidence"]]
 
         # ensure each evidence has a source (infer from locator if missing)
-        for e in (x.get("evidence") or []):
+        for e in x.get("evidence") or []:
             if "source" not in e or not e["source"]:
-                loc = str(e.get("locator",""))
-                if loc.startswith("row="):   e["source"] = "loss_run"
-                elif loc.startswith("para="): e["source"] = "notes"
-                else:                         e["source"] = "sov"
-
+                loc = str(e.get("locator", ""))
+                if loc.startswith("row="):
+                    e["source"] = "loss_run"
+                elif loc.startswith("para="):
+                    e["source"] = "notes"
+                else:
+                    e["source"] = "sov"
 
     # validate & filter
     allowed_snips = _collect_allowed_snippets(context)
     out: List[Dict[str, Any]] = []
     dropped = 0
     for x in arr:
-        if not _valid_item(x, allowed_snips): 
+        if not _valid_item(x, allowed_snips):
             dropped += 1
             continue
-        if x["code"] in existing_codes or x["title"] in existing_titles: 
+        if x["code"] in existing_codes or x["title"] in existing_titles:
             dropped += 1
             continue
-        
 
         # normalize evidence shape & role
         for e in x.get("evidence", []):
             # default source when omitted: try to infer from locator, else 'sov'
             src = e.get("source")
             if not src:
-                loc = str(e.get("locator",""))
-                if loc.startswith("row="): src = "loss_run"
-                elif loc.startswith("para="): src = "notes"
-                else: src = "sov"
+                loc = str(e.get("locator", ""))
+                if loc.startswith("row="):
+                    src = "loss_run"
+                elif loc.startswith("para="):
+                    src = "notes"
+                else:
+                    src = "sov"
                 e["source"] = src
-            e.setdefault("role", "primary")  # mined item’s first evidence can be primary
+            e.setdefault(
+                "role", "primary"
+            )  # mined item’s first evidence can be primary
 
         # tag mined origin and cap text lengths a bit
         x.setdefault("tags", []).append("llm-mined")
@@ -304,7 +324,7 @@ def mine_additional_risks(
     for it in out:
         if not it.get("uid"):
             anchors = []
-            for e in (it.get("evidence") or []):
+            for e in it.get("evidence") or []:
                 src = e.get("source")
                 loc = e.get("locator")
                 if src and loc:
@@ -313,5 +333,5 @@ def mine_additional_risks(
             s = json.dumps(raw, sort_keys=True, ensure_ascii=False)
             it["uid"] = hashlib.md5(s.encode("utf-8")).hexdigest()
 
-    print(f"[LLM-MINER] Kept {len(out)} item(s), dropped {dropped}.")       
+    print(f"[LLM-MINER] Kept {len(out)} item(s), dropped {dropped}.")
     return out

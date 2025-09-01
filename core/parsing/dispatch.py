@@ -23,7 +23,9 @@ def _empty_bundle() -> Dict[str, List[Dict[str, Any]]]:
     }
 
 
-def _route(bundle: Dict[str, List[Dict[str, Any]]], bucket: str, item: Dict[str, Any]) -> None:
+def _route(
+    bundle: Dict[str, List[Dict[str, Any]]], bucket: str, item: Dict[str, Any]
+) -> None:
     if bucket not in bundle:
         bundle[bucket] = []
     bundle[bucket].append(item)
@@ -90,7 +92,9 @@ def parse_files(files: List[Any]) -> Dict[str, List[Dict[str, Any]]]:
 
         # ----- PDF -----
         if lower.endswith(".pdf"):
-            item = parse_pdf(f)  # expected: {"type":"pdf","text":..., "page_tags":[...], "meta":...}
+            item = parse_pdf(
+                f
+            )  # expected: {"type":"pdf","text":..., "page_tags":[...], "meta":...}
             item["filename"] = filename
 
             # Prefer page_tags if strong enough, else fall back to text classifier
@@ -105,7 +109,9 @@ def parse_files(files: List[Any]) -> Dict[str, List[Dict[str, Any]]]:
 
         # ----- EXCEL -----
         elif lower.endswith((".xlsx", ".xls")):
-            item = parse_excel(f)  # expected: {"type":"excel","sheets":[...], "meta":...}
+            item = parse_excel(
+                f
+            )  # expected: {"type":"excel","sheets":[...], "meta":...}
             item["filename"] = filename
             result = clf.classify_excel(item.get("sheets", []), filename=filename)
             bucket = result.get("bucket", "other")
@@ -114,7 +120,9 @@ def parse_files(files: List[Any]) -> Dict[str, List[Dict[str, Any]]]:
 
         # ----- DOCX -----
         elif lower.endswith(".docx"):
-            item = parse_docx(f)  # expected: {"type":"docx","text":..., "tables":..., "meta":...}
+            item = parse_docx(
+                f
+            )  # expected: {"type":"docx","text":..., "tables":..., "meta":...}
             item["filename"] = filename
             result = clf.classify_text(item.get("text", ""), filename=filename)
             bucket = result.get("bucket", "other")
@@ -123,7 +131,9 @@ def parse_files(files: List[Any]) -> Dict[str, List[Dict[str, Any]]]:
 
         # ----- EMAIL (.eml/.msg) -----
         elif lower.endswith((".eml", ".msg")):
-            email = parse_email(f)  # expected: {"type":"email","headers":...,"body_text":...,"attachments":[...]}
+            email = parse_email(
+                f
+            )  # expected: {"type":"email","headers":...,"body_text":...,"attachments":[...]}
             email["filename"] = filename
             _route(bundle, "email_body", email)
             seen_names.add(lower)

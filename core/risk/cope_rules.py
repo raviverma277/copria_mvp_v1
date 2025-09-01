@@ -1,6 +1,7 @@
 # core/risk/cope_rules.py
 from typing import Dict, Any
 
+
 def compute_cope_score(results: Dict[str, Any]) -> Dict[str, Any]:
     """
     Tiny, explainable COPE scorer.
@@ -9,23 +10,23 @@ def compute_cope_score(results: Dict[str, Any]) -> Dict[str, Any]:
     """
 
     # Pull normalized rows your pipeline already emits
-    sov_rows = results.get("sov", []) or []          # list[dict]
-    loss_rows = results.get("loss_runs", []) or []   # list[dict]
+    sov_rows = results.get("sov", []) or []  # list[dict]
+    loss_rows = results.get("loss_runs", []) or []  # list[dict]
 
     # --- Construction (C) ---
     good_const = {"rcc", "reinforced concrete"}
     c_points = 0
     for r in sov_rows:
-        cons = str(r.get("construction","")).lower()
+        cons = str(r.get("construction", "")).lower()
         if any(g in cons for g in good_const):
             c_points += 1
-    c_score = min(10, c_points)   # cap
+    c_score = min(10, c_points)  # cap
 
     # --- Occupancy (O) ---
     # crude heuristic: office = safer, warehouse = neutral, unknown = neutral
     o_score = 0
     for r in sov_rows:
-        occ = str(r.get("occupancy","")).lower()
+        occ = str(r.get("occupancy", "")).lower()
         if "office" in occ:
             o_score += 2
         elif "warehouse" in occ:
@@ -36,7 +37,7 @@ def compute_cope_score(results: Dict[str, Any]) -> Dict[str, Any]:
     # sprinklers add, lack subtracts
     p_score = 0
     for r in sov_rows:
-        sprink = str(r.get("sprinklered","")).lower()
+        sprink = str(r.get("sprinklered", "")).lower()
         if sprink in ("true", "1", "yes"):
             p_score += 2
         elif sprink in ("false", "0", "no"):
@@ -47,7 +48,7 @@ def compute_cope_score(results: Dict[str, Any]) -> Dict[str, Any]:
     # simple proxy: open losses reduce; closed small losses mild impact
     e_score = 10
     for r in loss_rows:
-        status = str(r.get("status","")).lower()
+        status = str(r.get("status", "")).lower()
         incurred = float(r.get("incurred", 0) or 0)
         if status == "open":
             e_score -= 2
@@ -59,6 +60,6 @@ def compute_cope_score(results: Dict[str, Any]) -> Dict[str, Any]:
         "construction": c_score,
         "occupancy": o_score,
         "protection": p_score,
-        "exposure": e_score
+        "exposure": e_score,
     }
     return {"score": total, "breakdown": breakdown}

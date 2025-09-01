@@ -9,31 +9,38 @@ import json
 
 # --- Ingest source (unchanged) ------------------------------------------------
 
+
 class IngestSource(str, Enum):
     LOCAL = "local"
     CYTORA = "cytora"
     AUTO = "auto"
 
+
 # --- New: attachment roles & email envelope -----------------------------------
+
 
 class AttachmentRole(str, Enum):
     """Semantic role of an attachment so the pipeline can route parsers cleanly."""
+
     SUBMISSION_PDF = "submission_pdf"
     SOV = "sov"
     LOSS_RUN = "loss_run"
-    EMAIL = "email"                # the .eml/.msg itself
+    EMAIL = "email"  # the .eml/.msg itself
     EMAIL_ATTACHMENT = "email_attachment"
     OTHER = "other"
+
 
 @dataclass
 class EmailEnvelope:
     """Metadata for an email (when the attachment itself is the email message)."""
+
     subject: Optional[str] = None
     from_addr: Optional[str] = None
     to: List[str] = field(default_factory=list)
     cc: List[str] = field(default_factory=list)
-    sent_at: Optional[str] = None        # ISO 8601 string
+    sent_at: Optional[str] = None  # ISO 8601 string
     message_id: Optional[str] = None
+
 
 @dataclass
 class AttachmentMeta:
@@ -42,15 +49,16 @@ class AttachmentMeta:
     - For an .eml/.msg: role=EMAIL and fill email_envelope.
     - For files inside that email: set parent_id to the email attachment's id.
     """
-    id: str                                # stable within this bundle (e.g., "att-1" or "att-<hash>")
-    name: str                              # original filename
+
+    id: str  # stable within this bundle (e.g., "att-1" or "att-<hash>")
+    name: str  # original filename
     mime_type: Optional[str] = None
     role: AttachmentRole = AttachmentRole.OTHER
     size_bytes: Optional[int] = None
     sha256: Optional[str] = None
-    storage_path: Optional[str] = None     # local path or object key if persisted
-    origin: Optional[str] = None           # "upload" | "cytora" | "email"
-    parent_id: Optional[str] = None        # link email attachments to the EMAIL attachment
+    storage_path: Optional[str] = None  # local path or object key if persisted
+    origin: Optional[str] = None  # "upload" | "cytora" | "email"
+    parent_id: Optional[str] = None  # link email attachments to the EMAIL attachment
     email_envelope: Optional[EmailEnvelope] = None
 
     @staticmethod
@@ -61,7 +69,11 @@ class AttachmentMeta:
         # Best-effort enum coercion
         role_val = d.get("role", AttachmentRole.OTHER)
         try:
-            role = role_val if isinstance(role_val, AttachmentRole) else AttachmentRole(str(role_val))
+            role = (
+                role_val
+                if isinstance(role_val, AttachmentRole)
+                else AttachmentRole(str(role_val))
+            )
         except Exception:
             role = AttachmentRole.OTHER
 
@@ -82,31 +94,42 @@ class AttachmentMeta:
             email_envelope=env,
         )
 
+
 # --- Provenance (unchanged behavior) ------------------------------------------
+
 
 @dataclass
 class Provenance:
-    run_id: str                          # caller-provided or generated
-    source: IngestSource                 # "local" | "cytora" | "auto"
-    received_at: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
-    checksum: Optional[str] = None       # sha256 of normalized payload
+    run_id: str  # caller-provided or generated
+    source: IngestSource  # "local" | "cytora" | "auto"
+    received_at: str = field(
+        default_factory=lambda: datetime.utcnow().isoformat() + "Z"
+    )
+    checksum: Optional[str] = None  # sha256 of normalized payload
     raw_meta: Dict[str, Any] = field(default_factory=dict)
 
     def idempotency_key(self) -> str:
         base = f"{self.source}:{self.run_id}:{self.checksum or ''}"
         return hashlib.sha256(base.encode("utf-8")).hexdigest()
 
+
 # --- Submission bundle (extended but backward-compatible) ---------------------
+
 
 @dataclass
 class SubmissionBundle:
     """Contract-first bundle that the pipeline ingests."""
-    sov: Optional[Dict[str, Any]] = None          # parsed SOV (rows/records or normalized)
-    loss_run: Optional[Dict[str, Any]] = None     # parsed loss runs
-    notes: Optional[str] = None                   # freeform notes/emails
+
+    sov: Optional[Dict[str, Any]] = None  # parsed SOV (rows/records or normalized)
+    loss_run: Optional[Dict[str, Any]] = None  # parsed loss runs
+    notes: Optional[str] = None  # freeform notes/emails
     # Backward-compat: callers can still pass a List[Dict[str, Any]]
-    attachments: List[Union[AttachmentMeta, Dict[str, Any]]] = field(default_factory=list)
-    provenance: Provenance = field(default_factory=lambda: Provenance(run_id="unknown", source=IngestSource.LOCAL))
+    attachments: List[Union[AttachmentMeta, Dict[str, Any]]] = field(
+        default_factory=list
+    )
+    provenance: Provenance = field(
+        default_factory=lambda: Provenance(run_id="unknown", source=IngestSource.LOCAL)
+    )
 
     # --- helpers --------------------------------------------------------------
 
@@ -143,7 +166,9 @@ class SubmissionBundle:
 
     @staticmethod
     def compute_checksum(payload: Dict[str, Any]) -> str:
-        normalized = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        normalized = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode(
+            "utf-8"
+        )
         return hashlib.sha256(normalized).hexdigest()
 
     def finalize(self) -> "SubmissionBundle":
@@ -152,6 +177,7 @@ class SubmissionBundle:
         self.provenance.checksum = self.compute_checksum(payload)
         return self
 
+
 # ---------------------------
 # Adaptive Red-Flag Feedback
 # ---------------------------
@@ -159,27 +185,33 @@ class SubmissionBundle:
 # Verdict choices captured from the UI
 Verdict = Literal["confirm", "dismiss", "downgrade", "upgrade", "needs-more-info"]
 
+
 @dataclass
 class RiskFeedback:
     """
     Minimal, append-only feedback record for a single risk item as seen by an underwriter.
     Stored as JSONL; last record per (run_id, risk_uid) is treated as the current verdict in the UI.
     """
+
     # identity for joining back to a run + risk
     run_id: str
     risk_uid: str  # stable id you compute when building each risk item
 
     # who/when (simple for local dev; later can be SSO user)
     user: str = "local-user"
-    submitted_at: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+    submitted_at: str = field(
+        default_factory=lambda: datetime.utcnow().isoformat() + "Z"
+    )
 
     # decision
     verdict: Verdict = "confirm"
     rationale: str = ""
 
     # frozen context for reproducibility/auditing
-    context_signature: str = ""           # SHA-256 over (code/title + evidence anchors)
-    risk_snapshot: Dict[str, Any] = field(default_factory=dict)  # full risk item as seen at decision time
+    context_signature: str = ""  # SHA-256 over (code/title + evidence anchors)
+    risk_snapshot: Dict[str, Any] = field(
+        default_factory=dict
+    )  # full risk item as seen at decision time
 
     # provenance
     source: str = "ui"
@@ -201,4 +233,3 @@ def make_context_signature(risk_item: Dict[str, Any]) -> str:
     }
     blob = json.dumps(core, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
-
