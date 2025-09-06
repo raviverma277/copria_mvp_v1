@@ -12,10 +12,13 @@ events.jsonl
 .env
 .env.*
 .streamlit/secrets.toml
+.secrets*
 
 # OS / IDE
 .vscode/
 .idea/
+.DS_Store
+Thumbs.db
 
 # Extra safety for local secrets & artifacts
 *.jsonl
