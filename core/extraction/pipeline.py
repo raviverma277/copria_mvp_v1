@@ -34,6 +34,23 @@ from core.risk.miner import mine_additional_risks
 from core.config import get_config
 from core.utils.events import publish
 from core.risk.miner import _uid_from_item  # reuse the helper
+from core.risk.pipeline import run_risk_pipeline
+from core.config import QUICK_RISKS_ENABLED
+from dataclasses import is_dataclass, asdict
+
+
+
+import hashlib, re
+from typing import Dict, Any, List
+
+# --- Pricing imports ---
+from core.pricing.pricing_contracts import SubmissionPricingInput, PricingResult, PricingRange
+from core.pricing.pricing_benchmark import PriceBenchmark
+from core.pricing.pricing_engine import RulesPricer
+from core.pricing.strategy_factory import get_pricer
+# Optional LLM refinement (USD):
+# from pricing.llm_pricer import LLMPricerBlend
+
 import streamlit as st
 import os
 
@@ -113,6 +130,403 @@ def _email_envs_from_submission_bundle(sb_dict: dict) -> list[dict]:
                 )
         out.append(rec)
     return out
+
+# ==== QRA: helpers (safe to add) ====
+
+# helper: coerce dataclass/object into a shallow dict
+def _coerce_to_dict(obj) -> dict:
+    if isinstance(obj, dict):
+        return obj
+    if obj is None:
+        return {}
+    # dataclass
+    if is_dataclass(obj):
+        try:
+            return asdict(obj)
+        except Exception:
+            pass
+    # custom object with to_dict()
+    to_dict = getattr(obj, "to_dict", None)
+    if callable(to_dict):
+        try:
+            d = to_dict()
+            if isinstance(d, dict):
+                return d
+        except Exception:
+            pass
+    # generic object
+    if hasattr(obj, "__dict__"):
+        try:
+            # shallow copy; also coerce a few obvious nested attrs if they’re dataclasses
+            d = dict(obj.__dict__)
+            for k, v in list(d.items()):
+                if is_dataclass(v):
+                    d[k] = asdict(v)
+                elif hasattr(v, "__dict__") and not isinstance(v, (dict, list, str, int, float, bool)):
+                    d[k] = dict(v.__dict__)
+            return d
+        except Exception:
+            pass
+    return {}
+
+def _get_key_or_attr(container, key, default=None):
+    """Get dict[key] or getattr(container, key) with a default."""
+    if isinstance(container, dict):
+        return container.get(key, default)
+    return getattr(container, key, default)
+
+
+def _slugify(text: str) -> str:
+    s = re.sub(r"[^A-Za-z0-9]+", "-", (text or "").strip().lower())
+    return re.sub(r"-+", "-", s).strip("-")
+
+def _stamp_uid(risk: Dict[str, Any]) -> Dict[str, Any]:
+    code = risk.get("code", "UNK")
+    locs = "|".join(sorted(risk.get("locations", [])))
+    title = _slugify(risk.get("title", ""))
+    basis = f"{code}|{locs}|{title}"
+    risk["uid"] = hashlib.sha1(basis.encode("utf-8")).hexdigest()[:16]
+    return risk
+
+# Field alias helper to be resilient to schema drift
+FIELD_ALIASES = {
+    "location_id": ["location_id", "locationId", "id"],
+    "sprinklers": ["sprinklers", "fire_sprinklers", "is_sprinklered", "sprinklered"],
+    "fire_alarm": ["fire_alarm", "is_fire_alarm_present", "alarm_system"],
+    "roof_age_years": ["roof_age_years", "roofAgeYears", "roof_age", "roofAge"],
+}
+
+def _get(record: Dict[str, Any], key: str, default=None):
+    for k in FIELD_ALIASES.get(key, [key]):
+        if k in record and record[k] not in (None, "", "Unknown"):
+            return record[k]
+        pk = f"_provisional_{k}"
+        if pk in record and record[pk] not in (None, "", "Unknown"):
+            return record[pk]
+    return default
+
+def _as_bool(x) -> bool:
+    if isinstance(x, bool): return x
+    if isinstance(x, (int, float)): return x != 0
+    if isinstance(x, str): return x.strip().lower() in {"y","yes","true","1","present"}
+    return False
+
+# ====  quick_risks_from_bundle  ====
+def quick_risks_from_bundle(bundle) -> List[Dict[str, Any]]:
+    """
+    Lightweight, deterministic red flags over the SubmissionBundle (contract-first).
+    Supports legacy shapes, too.
+    Looks at:
+      - No sprinklers / no fire alarm
+      - Roof age > 20
+      - Flood zone high (if present) / wildfire high (if present)
+      - Prior large claim (> $100k incurred or paid)
+    """
+    if not QUICK_RISKS_ENABLED:
+        return []
+
+    quick: List[Dict[str, Any]] = []
+
+    # Normalize bundle to a dict first, but we’ll also allow attr fallbacks
+    sb = _coerce_to_dict(bundle) or bundle or {}
+
+    # 1) Pull "locations" from multiple possible shapes
+    locations = []
+
+     # Contract-first (recommended): sb["sov"]["records"] OR object.sov.records
+    sov = _get_key_or_attr(sb, "sov")
+    if sov is None and not isinstance(sb, dict):  # if sb is still an object
+        sov = _get_key_or_attr(bundle, "sov")
+
+    sov_dict = _coerce_to_dict(sov)
+    sov_records = _get_key_or_attr(sov_dict, "records") or _get_key_or_attr(sov, "records") or []
+    if isinstance(sov_records, list) and sov_records:
+        locations = sov_records
+    else:
+        # Legacy fallbacks:
+        # - sb["locations"]
+        # - sb["normalized"]["locations"]
+        locations = _get_key_or_attr(sb, "locations") \
+            or _get_key_or_attr(_get_key_or_attr(sb, "normalized", {}), "locations") \
+            or []
+
+    # 2) Deterministic per-location checks
+    for loc in locations or []:
+        loc_id = _get(loc, "location_id", default="UNKNOWN-LOC")
+
+        # No sprinklers
+        sprinklers = _get(loc, "sprinklers")
+        if sprinklers is not None and not _as_bool(sprinklers):
+            quick.append(_stamp_uid({
+                "code": "FIRE-NO-SPRINKLER",
+                "title": "No sprinklers",
+                "severity": "high",
+                "locations": [loc_id],
+                "tags": ["quick"],
+                "rationale": "Location indicates no automatic sprinkler protection.",
+                "evidence_refs": [{"loc_id": loc_id, "field": "sprinklers", "value": sprinklers}],
+            }))
+
+        # No fire alarm
+        fire_alarm = _get(loc, "fire_alarm")
+        if fire_alarm is not None and not _as_bool(fire_alarm):
+            quick.append(_stamp_uid({
+                "code": "FIRE-NO-ALARM",
+                "title": "No fire alarm",
+                "severity": "medium",
+                "locations": [loc_id],
+                "tags": ["quick"],
+                "rationale": "No fire/alarm system present.",
+                "evidence_refs": [{"loc_id": loc_id, "field": "fire_alarm", "value": fire_alarm}],
+            }))
+
+        # Roof age > 20
+        roof_age = _get(loc, "roof_age_years")
+        try:
+            if roof_age is not None and float(roof_age) > 20:
+                quick.append(_stamp_uid({
+                    "code": "ROOF-AGED",
+                    "title": f"Roof age {int(float(roof_age))} yrs",
+                    "severity": "medium",
+                    "locations": [loc_id],
+                    "tags": ["quick"],
+                    "rationale": "Roof age exceeds 20 years.",
+                    "evidence_refs": [{"loc_id": loc_id, "field": "roof_age_years", "value": roof_age}],
+                }))
+        except Exception:
+            pass
+
+        # Optional: Flood & Wildfire quick checks (only if obvious fields are present)
+        flood = _get(loc, "flood_zone") or _get(loc, "flood_risk")
+        if isinstance(flood, str) and flood.strip().upper() in {"AE", "A", "V", "VE", "HIGH"}:
+            quick.append(_stamp_uid({
+                "code": "FLOOD-HIGH",
+                "title": "High flood zone",
+                "severity": "high",
+                "locations": [loc_id],
+                "tags": ["quick"],
+                "rationale": f"Flood zone '{str(flood)}' indicates elevated flood risk.",
+                "evidence_refs": [{"loc_id": loc_id, "field": "flood_zone", "value": flood}],
+            }))
+
+        wild = _get(loc, "wildfire_risk") or _get(loc, "wildfire_score")
+        try:
+            # accept categorical or numeric (>= 4/5 or >= 70/100)
+            if isinstance(wild, str) and wild.strip().lower() in {"high", "very high"}:
+                wild_hit = True
+            elif wild is not None and float(wild) >= 4:   # 1..5 scale
+                wild_hit = True
+            elif wild is not None and float(wild) >= 70:  # 0..100 scale
+                wild_hit = True
+            else:
+                wild_hit = False
+        except Exception:
+            wild_hit = False
+
+        if wild_hit:
+            quick.append(_stamp_uid({
+                "code": "WILDFIRE-HIGH",
+                "title": "High wildfire risk",
+                "severity": "high",
+                "locations": [loc_id],
+                "tags": ["quick"],
+                "rationale": "Wildfire risk score/category indicates elevated risk.",
+                "evidence_refs": [{"loc_id": loc_id, "field": "wildfire_risk", "value": wild}],
+            }))
+
+    # 3) Prior large claims (scan loss_run.records if present) — resilient to dicts & dataclasses
+    # Reuse 'sb' if the function already created it; otherwise derive it now
+    try:
+        sb  # defined earlier in the function when reading SOV
+    except NameError:
+        sb = _coerce_to_dict(bundle) or bundle or {}
+
+    loss = _get_key_or_attr(sb, "loss_run")
+    if loss is None and not isinstance(sb, dict):
+        # If sb is still an object, also try attribute access on the original bundle
+        loss = _get_key_or_attr(bundle, "loss_run")
+
+    loss_dict = _coerce_to_dict(loss)
+    loss_records = _get_key_or_attr(loss_dict, "records") or _get_key_or_attr(loss, "records") or []
+
+    # Normalize each row to a dict so .get(...) works even if rows are dataclass instances
+    norm_loss_records = []
+    for row in (loss_records or []):
+        norm_loss_records.append(row if isinstance(row, dict) else _coerce_to_dict(row))
+
+    THRESH = 100_000  # tune as desired
+    large_claims = []
+    for lr in norm_loss_records:
+        # be tolerant of keys
+        amt = None
+        for k in ["incurred", "paid", "claim_amount", "loss_amount"]:
+            v = lr.get(k) or lr.get(f"_provisional_{k}")
+            try:
+                if v not in (None, "", "Unknown"):
+                    amt = float(str(v).replace(",", "").replace("$", ""))
+                    break
+            except Exception:
+                pass
+        if amt is not None and amt >= THRESH:
+            # try to extract a location id if present
+            loc_id = _get(lr, "location_id", default=None) or _get(lr, "loc_id", default=None)
+            large_claims.append((amt, loc_id))
+
+    if large_claims:
+        # aggregate into one quick item; include the worst example in rationale
+        top = max(large_claims, key=lambda x: x[0])
+        locs = sorted({lc[1] for lc in large_claims if lc[1]}) or []
+        quick.append(_stamp_uid({
+            "code": "PRIOR-LARGE-CLAIMS",
+            "title": "Prior large claim(s) detected",
+            "severity": "high",
+            "locations": locs,
+            "tags": ["quick"],
+            "rationale": f"At least one claim ≥ ${THRESH:,.0f} (max observed ≈ ${top[0]:,.0f}).",
+            "evidence_refs": [{"loc_id": lc[1], "field": "incurred/paid", "value": lc[0]} for lc in large_claims[:3]],
+        }))
+
+
+    return quick
+
+
+
+def merge_quick_into_full(full_risks: List[Dict[str, Any]], quick_risks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    by_uid = {r.get("uid"): r for r in full_risks if r.get("uid")}
+    out = list(full_risks)
+    for q in quick_risks:
+        if "uid" not in q: q = _stamp_uid(q)
+        uid = q["uid"]
+        if uid in by_uid:
+            r = by_uid[uid]
+            r["tags"] = sorted(set((r.get("tags") or [])) | {"quick"})
+            if not r.get("rationale"): r["rationale"] = q.get("rationale")
+            if not r.get("evidence_refs"): r["evidence_refs"] = q.get("evidence_refs")
+        else:
+            out.append(q)
+    return out
+# ====================================
+
+
+# ---------- Pricing helpers (derived metrics + serialization) ----------
+def _sum_tiv(rows: list[dict]) -> float:
+    """
+    Sum Total Insured Value from normalized SOV rows.
+    Prefers 'total_tiv' if present, else falls back to tiv_building + tiv_contents.
+    """
+    total = 0.0
+    for r in rows or []:
+        try:
+            if r.get("total_tiv") not in (None, ""):
+                total += float(r.get("total_tiv") or 0)
+            else:
+                tb = float(r.get("tiv_building") or 0)
+                tc = float(r.get("tiv_contents") or 0)
+                total += (tb + tc)
+        except Exception:
+            pass
+    return float(total)
+
+def _approx_cope_score(rows: list[dict]) -> float:
+    """
+    Very simple, explainable COPE proxy from normalized SOV fields.
+    You likely already compute a COPE score elsewhere; if so, replace this with that value.
+    """
+    if not rows:
+        return 70.0
+    # Start from 70 and nudge
+    score = 70.0
+    n = min(len(rows), 200)
+    has_sprinklers = 0
+    has_alarm = 0
+    roof_age_sum = 0.0
+    flood_hits = 0
+    wildfire_hits = 0
+
+    for r in rows[:n]:
+        if r.get("sprinklered") is True: has_sprinklers += 1
+        if str(r.get("fire_alarm")).strip().lower() in {"true", "yes", "y", "1"}:
+            has_alarm += 1
+        try:
+            roof_age_sum += float(r.get("roof_age_years") or 0)
+        except Exception:
+            pass
+        if str(r.get("flood_zone")).strip().lower() not in {"", "none", "no", "false"}:
+            flood_hits += 1
+        if str(r.get("wildfire_risk")).strip().lower() not in {"", "none", "no", "false"}:
+            wildfire_hits += 1
+
+    # Normalize by sample
+    p_spr = has_sprinklers / n
+    p_alarm = has_alarm / n
+    avg_roof = (roof_age_sum / n) if n else 0.0
+    p_flood = flood_hits / n
+    p_wild = wildfire_hits / n
+
+    score += 10.0 * p_spr
+    score += 5.0 * p_alarm
+    score -= 0.2 * max(0.0, avg_roof - 10.0)  # older roofs reduce
+    score -= 8.0 * p_flood
+    score -= 6.0 * p_wild
+    return max(0.0, min(100.0, score))
+
+def _cope_index_from_breakdown(cope_obj: dict) -> float:
+    """
+    Convert the Risk tab's COPE 'points' breakdown (e.g., {'construction':2,...})
+    into a 0..100 COPE index where 100 = best risk.
+    Assumes each dimension is ~0..10 points; adjust if your scale changes.
+    """
+    bd = (cope_obj or {}).get("breakdown") or {}
+    if not bd:
+        return 70.0  # neutral default
+    dims = max(1, len(bd))
+    max_points = 10.0 * dims
+    points = sum(float(v or 0) for v in bd.values())
+    idx = 100.0 - (points / max_points) * 100.0  # invert: lower points => higher index
+    return float(max(0.0, min(100.0, round(idx, 2))))
+
+
+
+def _loss_ratio_proxy(loss_rows: list[dict], tiv_total: float) -> float:
+    """
+    Proxy loss ratio when premium history is unavailable:
+    sum(incurred) / TIV (clamped 0..1). Replace with true premium-based LR when available.
+    """
+    incurred = 0.0
+    for r in loss_rows or []:
+        try:
+            incurred += float(r.get("incurred") or 0)
+        except Exception:
+            pass
+    if tiv_total <= 0:
+        return 0.0
+    lr = incurred / tiv_total
+    return float(max(0.0, min(1.0, lr)))
+
+def _pricing_result_to_dict(pr: PricingResult) -> dict:
+    return {
+        "submission_id": pr.submission_id,
+        "percentiles": [
+            {
+                "metric": p.metric,
+                "value": p.value,
+                "percentile": p.pctl,
+                "median": p.median,
+                "iqr": p.iqr,
+            } for p in (pr.percentiles or [])
+        ],
+        "pricing_range": {
+            "premium_min": pr.pricing_range.premium_min,
+            "premium_median": pr.pricing_range.premium_median,
+            "premium_max": pr.pricing_range.premium_max,
+            "currency": pr.pricing_range.currency,
+        },
+        "confidence": pr.confidence,
+        "confidence_label": pr.confidence_label,
+        "reason_codes": pr.reason_codes,
+        "llm_explainer": pr.llm_explainer,
+    }
+# ----------------------------------------------------------------------
 
 
 def run_extraction_pipeline(
@@ -246,8 +660,7 @@ def run_extraction_pipeline(
     submission_core = {"insured_name": "ACME LTD", "currency": "GBP"}
 
     # --- Helpers / imports ---
-    def _norm_join(s: str) -> str:
-        import re
+    def _norm_join(s: str) -> str:       
 
         return "_".join(
             re.sub(r"[^a-z0-9]+", " ", str(s or "").lower()).strip().split()
@@ -859,6 +1272,84 @@ def run_extraction_pipeline(
     sov_validation = validate_rows("sov", sov_rows)
     loss_run_validation = validate_rows("loss_run", loss_rows)
 
+    # ===================== Pricing Enrichment (inserted here) =====================
+    try:
+        # 1) Derive submission-level metrics from normalized data
+        total_tiv = _sum_tiv(sov_rows)
+        # Prefer COPE from the Risk pipeline (normalized to 0–100); fallback to heuristic if unavailable
+        try:
+            _risk_bundle_min = {
+                "sov": {"records": sov_rows or []},
+                "loss_run": {"records": loss_rows or []},
+            }
+            risk_cope_obj, _ = run_risk_pipeline(_risk_bundle_min)
+            cope_score = _cope_index_from_breakdown(risk_cope_obj)
+            _cope_source = "risk_pipeline"
+        except Exception as _e:
+            print("[PRICING] Risk COPE unavailable, using heuristic COPE:", repr(_e))
+            cope_score = _approx_cope_score(sov_rows)
+            _cope_source = "heuristic"
+        risk_count_total = len(risk_items_payload or [])
+        loss_ratio = _loss_ratio_proxy(loss_rows, total_tiv)
+
+        # 2) Build pricing input
+        submission_id = st.session_state.get("run_id") or "unknown"
+        p_in = SubmissionPricingInput(
+            submission_id=submission_id,
+            tiv=total_tiv,
+            cope_score=cope_score,
+            risk_count=risk_count_total,
+            loss_ratio=loss_ratio,
+            # optionally pass occupancy/construction/protection/exposure if you have them
+        )
+
+        # 3) Benchmark + strategy-picked pricing
+        bm = PriceBenchmark(csv_path="data/benchmarks/pricing_benchmark.csv")
+
+        # Pick strategy (Streamlit control can set st.session_state['pricing_strategy'])
+        strategy = (
+            st.session_state.get("pricing_strategy")
+            or os.getenv("PRICING_STRATEGY", "rules")
+        )
+
+        try:
+            pricer = get_pricer(strategy)
+        except Exception as _e:
+            print(f"[PRICING] unknown strategy '{strategy}', defaulting to 'rules'")
+            pricer = get_pricer("rules")
+
+        p_res = pricer.price(p_in, bm)
+
+
+        # 4) Currency normalization (USD). You asked to keep the LLM pricer in USD as well.
+        p_res.pricing_range = PricingRange(
+            premium_min=p_res.pricing_range.premium_min,
+            premium_median=p_res.pricing_range.premium_median,
+            premium_max=p_res.pricing_range.premium_max,
+            currency="USD",
+        )
+
+        # 5) Optional LLM refinement (kept off by default; enable via config/flag)
+        # try:
+        #     cfg = get_config()
+        #     if cfg.get("use_llm_pricing_blend", False):
+        #         llm_client = cfg.get("llm_client")  # your wrapper
+        #         if llm_client:
+        #             from pricing.llm_pricer import LLMPricerBlend
+        #             p_res = LLMPricerBlend(llm_client, weight_llm=0.35).blend(p_in, bm, p_res)
+        # except Exception as e:
+        #     print("[PRICING] LLM blend skipped:", repr(e))
+
+        pricing_payload = _pricing_result_to_dict(p_res)
+        pricing_payload["strategy"] = strategy
+        pricing_payload["cope_source"] = _cope_source 
+    except Exception as e:
+        print("[PRICING] enrichment failed:", repr(e))
+        pricing_payload = None
+    # ==============================================================================
+
+
+    
     # --- Assemble result object expected by the UI ---
     return {
         "submission_core": submission_core,
@@ -884,5 +1375,6 @@ def run_extraction_pipeline(
             "notes": notes_snips,
         },
         "llm_context": build_llm_context(sov_snips, loss_snips, notes_snips),
+        "pricing": pricing_payload,   # <— NEW: Risk & Pricing tab will read this
         "debug_bundle_counts": {k: len(v) for k, v in bundle.items()},
     }

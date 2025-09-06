@@ -15,6 +15,8 @@ from core.utils.state import get_state
 from core.parsing.dispatch import parse_files
 from core.extraction.pipeline import run_extraction_pipeline
 from core.risk.pipeline import run_risk_pipeline
+from core.extraction.pipeline import merge_quick_into_full  
+from core.extraction.pipeline import quick_risks_from_bundle
 from core.pricing.engine import price_submission
 from core.schemas.active import get_active_name, active_keys
 from core.schemas.active import active_titles
@@ -28,8 +30,7 @@ from core.schemas.schema_builder import (
 from core.schemas.contracts import RiskFeedback, make_context_signature
 from core.feedback.store import log_feedback, load_feedback
 from collections import Counter
-from core.feedback.store import load_feedback
-
+from core.config import QUICK_RISKS_ENABLED as QUICK_RISKS_ENABLED_DEFAULT
 import pandas as pd
 
 
@@ -232,6 +233,138 @@ def _safe_llm_status():
             "last_success": None,
         }
 
+# ===== Pricing Tab Helper =====
+def _render_pricing_tab(results: dict):
+    import streamlit as st    
+    from core.pricing.engine import price_submission
+
+    st.subheader("Pricing")
+
+    if not results:
+        st.info("Run **Process** to compute pricing.")
+        return
+    
+    st.markdown("**Pricing Strategy**")
+
+    # Available strategies; extend as you add implementations
+    options = ["rules"]
+    # Optional: show 'external' only if you’ve enabled it via env
+    if os.getenv("ENABLE_EXTERNAL_PRICER", "0") == "1":
+        options.append("external")
+
+    # default comes from session or ENV
+    default_strategy = (
+        st.session_state.get("pricing_strategy")
+        or os.getenv("PRICING_STRATEGY", "rules")
+    )
+    try:
+        default_index = options.index(default_strategy)
+    except ValueError:
+        default_index = 0
+
+    selected = st.selectbox(
+        "Select pricing strategy",
+        options=options,
+        index=default_index,
+        label_visibility="collapsed",
+        help="The pipeline will use this strategy the next time you click **Process**.",
+    )
+    st.session_state["pricing_strategy"] = selected
+
+    # Prefer pipeline-produced pricing payload (results['pricing'])
+    pricing = (results or {}).get("pricing")
+
+    # Fallback to legacy calculator if pipeline payload not found
+    if not pricing:
+        cope, concerns = run_risk_pipeline(results)
+        pricing = price_submission(results, cope, concerns)
+
+    if not pricing:
+        st.info("No pricing information available.")
+        return
+    
+    # Show a hint if the currently displayed pricing was computed with a different strategy
+    _computed_with = None
+    if isinstance(pricing, dict):
+        _computed_with = pricing.get("strategy")  # set by pipeline payload
+
+    if _computed_with and _computed_with != selected:
+        st.info(
+            f"Current pricing was computed using **'{_computed_with}'**. "
+            f"Select **'{selected}'** and click **Process** to recompute."
+        )
+
+
+    # Accept both object-like (dataclass serialized) and plain dict
+    rng = (pricing.get("pricing_range") or {}) if isinstance(pricing, dict) else {}
+    currency = rng.get("currency", "USD")
+
+    # Header metrics
+    col1, col2, col3 = st.columns(3)
+    try:
+        with col1:
+            st.metric("Premium (Min)", f"{float(rng.get('premium_min', 0)):,.0f} {currency}")
+        with col2:
+            st.metric("Premium (Median)", f"{float(rng.get('premium_median', 0)):,.0f} {currency}")
+        with col3:
+            st.metric("Premium (Max)", f"{float(rng.get('premium_max', 0)):,.0f} {currency}")
+    except Exception:
+        st.warning("Premium values missing or invalid.")
+
+    # Confidence
+    conf_val = float(pricing.get("confidence", 0.0)) if isinstance(pricing, dict) else 0.0
+    conf_lbl = str(pricing.get("confidence_label", "—")) if isinstance(pricing, dict) else "—"
+    st.progress(max(0.0, min(1.0, conf_val)))
+    st.caption(f"Confidence: {conf_lbl} ({conf_val:.2f})")
+
+    # Percentiles table
+    pct = pricing.get("percentiles") if isinstance(pricing, dict) else None
+    if pct:
+        df = pd.DataFrame([{
+            "Metric":      p.get("metric"),
+            "Value":       p.get("value"),
+            "Percentile":  round(float(p.get("percentile", 0.0)), 1),
+            "Benchmark Median": round(float(p.get("median", 0.0)), 3),
+            "IQR":         round(float(p.get("iqr", 0.0)), 3),
+        } for p in pct])
+        st.markdown("**Benchmark comparison**")
+        st.dataframe(df, use_container_width=True)
+
+    # Reasons & LLM rationale
+    if isinstance(pricing, dict):
+        reasons = pricing.get("reason_codes") or []
+        if reasons:
+            st.markdown("**Reason Codes**")
+            for r in reasons:
+                st.write(f"- {r}")
+
+        if pricing.get("llm_explainer"):
+            st.markdown("**LLM Rationale**")
+            st.write(pricing["llm_explainer"])
+
+    # Optional: tiny COPE context chip (kept light to avoid duplicating Risk tab)
+    with st.expander("Context (COPE, optional)", expanded=False):
+        # 1) Prefer the COPE value that actually fed the pricer (from results['pricing'])
+        cope_from_pricing = None
+        if isinstance(pricing, dict):
+            for row in (pricing.get("percentiles") or []):
+                if str(row.get("metric")).lower() == "cope_score":
+                    cope_from_pricing = row.get("value")
+                    break
+
+        if cope_from_pricing is not None:
+            try:
+                st.metric("COPE Score (pricing input)", round(float(cope_from_pricing), 2))
+            except Exception:
+                st.metric("COPE Score (pricing input)", cope_from_pricing)
+        else:
+            # 2) Fallback to the Risk pipeline COPE if the pricing payload didn't include it
+            try:
+                cope_obj, _ = run_risk_pipeline(results)
+                st.metric("COPE Score", cope_obj.get("score", "—"))
+            except Exception:
+                st.caption("COPE not available.")
+
 
 state = get_state()
 
@@ -257,6 +390,16 @@ with st.sidebar:
         st.markdown(f"**Run ID:** `{rid}`")
     else:
         st.caption("No run started yet")
+    
+    # QRA Toggle
+    if "quick_risks_enabled" not in st.session_state:
+        st.session_state["quick_risks_enabled"] = QUICK_RISKS_ENABLED_DEFAULT
+
+    st.sidebar.subheader("Analysis Options")
+    st.session_state["quick_risks_enabled"] = st.sidebar.checkbox(
+        "Enable Quick Risk Analysis", value=st.session_state["quick_risks_enabled"],
+        help="Show instant red flags after Process."
+    )
 
 
 st.markdown("---")  # divider
@@ -319,6 +462,8 @@ with st.container(border=True):
             unsafe_allow_html=True,
         )
 
+    
+
 
 # load defaults from config.yaml/env
 _cfg = get_config()
@@ -375,11 +520,25 @@ with st.sidebar:
             )  # reads sample JSON (or your configured path)
             st.sidebar.caption(f"Run: `{run_id[:8]}`")
 
-            with st.spinner("Extracting from Cytora sample…"):
-                state["results"] = run_extraction_pipeline(
-                    parsed_bundle=None, submission_bundle=submission_bundle
-                )
-            st.success("Extraction complete.")
+            # ==== QRA Step 5 (CYTORA): compute quick risks & stage heavy run ====
+            if st.session_state.get("quick_risks_enabled", True):
+                quick = quick_risks_from_bundle(submission_bundle)
+            else:
+                quick = []
+
+            st.session_state["quick_risks"] = quick
+            st.session_state["show_quick_banner"] = bool(quick)
+            st.session_state["pending_full_analysis"] = True
+            # Persist bundles for the staged heavy run
+            st.session_state["last_submission_bundle"] = submission_bundle
+            st.session_state["last_parsed_bundle"] = None
+
+            # Paint the banner immediately, then do heavy work in Step 7 block
+            try:
+                st.rerun()
+            except Exception:
+                st.experimental_rerun()
+            # ==== END QRA Step 5 (CYTORA) ====
 
             # Persist results for the next render and re-run the app to draw tabs
             st.session_state["results"] = state.get("results")
@@ -446,6 +605,26 @@ with st.sidebar:
 
             # ---- END: NEW ingestion wiring ----
 
+            # ==== QRA Step 5 (LOCAL/AUTO): compute quick risks & stage heavy run ====
+            if st.session_state.get("quick_risks_enabled", True):
+                quick = quick_risks_from_bundle(submission_bundle)
+            else:
+                quick = []
+
+            st.session_state["quick_risks"] = quick
+            st.session_state["show_quick_banner"] = bool(quick)
+            st.session_state["pending_full_analysis"] = True
+            st.session_state["last_submission_bundle"] = submission_bundle
+            st.session_state["last_parsed_bundle"] = bundle  # classified/parsed files if present
+
+            # Paint the banner immediately, then do heavy work in Step 7 block
+            try:
+                st.rerun()
+            except Exception:
+                st.experimental_rerun()
+            # ==== END QRA Step 5 (LOCAL/AUTO) ====
+
+
             with st.spinner("Extracting..."):
                 # Keep your legacy parsed flow, and also pass the new contract (optional in pipeline)
                 state["results"] = run_extraction_pipeline(
@@ -500,9 +679,7 @@ with st.sidebar:
     st.sidebar.markdown("**Full-schema draft (LLM)**")
 
     # Persisted payload from the Section F button handler
-    last_full = state.get(
-        "last_llm_call"
-    )  # set in Section F when you call propose_full_schema_from_llm
+    last_full = state.get('last_llm_call') or st.session_state.get('last_llm_call')  # set in Section F when you call propose_full_schema_from_llm
     meta = get_llm_last_meta() or {}
     err = get_llm_last_error()
 
@@ -547,6 +724,8 @@ with st.sidebar:
             st.sidebar.success("Last full-schema call succeeded")
 
 
+
+# After merging quick into full, stop showing the banner on subsequent renders
 # --------------- Tabs ---------------- #
 tabs = st.tabs(
     [
@@ -556,9 +735,10 @@ tabs = st.tabs(
         "Loss Runs",  # 3
         "Email",  # 4   <-- new
         "Questionnaire",  # 5   <-- new
-        "Risk & Pricing",  # 6
-        "Schema Review",  # 7
-        "JSON",  # 8
+        "Risk",  # 6
+        "Pricing",  # 7
+        "Schema Review",  # 8
+        "JSON",  # 9
     ]
 )
 
@@ -874,13 +1054,40 @@ with tabs[5]:
     else:
         st.info("No questionnaire pages detected yet.")
 
-# --- Tab 6: Risk & Pricing ---
+# --- Tab 6: Risk ---
 with tabs[6]:
     st.subheader("Risk Items")
+
+    # ==== QRA banner (always show if any quick risks) ====
+    _qr = st.session_state.get("quick_risks", []) or []
+    if _qr:
+        is_running = st.session_state.get("pending_full_analysis", False)
+        with st.expander(f"⚡ Quick Risks Detected ({len(_qr)})", expanded=True):
+            st.caption(
+                "These are preliminary red flags for triage. Full analysis is still running…"
+                if is_running
+                else "These are preliminary, high-signal issues:"
+            )
+
+            def _emoji_for(code: str) -> str:
+                u = (code or "").upper()
+                if "FLOOD" in u: return "🌊"
+                if "WILDFIRE" in u: return "🔥"
+                if "ROOF" in u: return "🏚"
+                if "SPRINKLER" in u or "ALARM" in u: return "❌"
+                return "⚠️"
+
+            for r in _qr:
+                locs = ", ".join(r.get("locations") or [])
+                title = r.get("title") or r.get("code") or "Risk"
+                st.markdown(f"- { _emoji_for(r.get('code')) } **{title}** ({locs})")
+    # ==== END QRA banner ====
+
+
     risk_items = (results or {}).get("risk_items", [])
 
     if not results:
-        st.info("Run **Process** to compute risk & pricing.")
+        st.info("Run **Process** to compute risk.")
     else:
         # ---- Render Risk Items (from pipeline) ----
         if not risk_items:
@@ -928,12 +1135,20 @@ with tabs[6]:
             filtered = [
                 ri for ri in risk_items if (ri.get("severity") or "unknown") in sel
             ]
+
             if fb_filter == "With feedback":
                 filtered = [ri for ri in filtered if _has_feedback(ri)]
             elif fb_filter == "Needs-more-info":
+                filtered = [ri for ri in filtered if _last_verdict_is(ri, "needs-more-info")]
+
+            # ⬅️ apply this AFTER the fb_filter branch so it’s always in effect while pending
+            # Hide quick-tagged cards while full analysis is running (summary already shows them)
+            if st.session_state.get("pending_full_analysis", False):
                 filtered = [
-                    ri for ri in filtered if _last_verdict_is(ri, "needs-more-info")
+                    ri for ri in filtered
+                    if "quick" not in (ri.get("tags") or [])
                 ]
+               
 
             to_show = filtered
 
@@ -1187,6 +1402,15 @@ with tabs[6]:
         col1, col2 = st.columns(2)
         with col1:
             st.metric("COPE Score", cope.get("score", "—"))
+            # --- Add the 0–100 COPE Index used by pricing ---
+            # Convert the Risk tab's raw COPE points (e.g., construction/occupancy/protection/exposure)
+            # into a 0–100 index where 100 = best (adjust max points if your scale changes).
+            _brk = (cope or {}).get("breakdown", {})
+            _dims = ("construction", "occupancy", "protection", "exposure")
+            _pts = sum(float(_brk.get(k, 0) or 0) for k in _dims)
+            _max_pts = 10.0 * len(_dims)   # <-- if a dimension isn’t out of 10, change this
+            _cope_index = max(0.0, min(100.0, 100.0 - (_pts / _max_pts) * 100.0))
+            st.caption(f"COPE Index (pricing scale, 0–100): {_cope_index:.2f}")
             st.json(cope.get("breakdown", {}))
         with col2:
             st.write("Nuanced Concerns")
@@ -1194,13 +1418,13 @@ with tabs[6]:
                 st.markdown(f"- **[{c.get('severity')}] {c.get('title')}**")
                 st.caption(c.get("rationale", ""))
 
-        st.subheader("Indicative Pricing")
-        price = price_submission(results, cope, concerns)
-        st.json(price)
-
-
-# --- Tab 7: Schema Review --- #
+# --- Tab 7: Pricing ---
 with tabs[7]:
+    _render_pricing_tab(state.get("results") or {})   
+
+
+# --- Tab 8: Schema Review --- #
+with tabs[8]:
     import json, difflib, re
     from copy import deepcopy
     from pathlib import Path
@@ -1693,7 +1917,6 @@ with tabs[7]:
     try:
         from core.schemas.schema_builder import get_llm_last_error, get_llm_last_meta
     except Exception:
-
         def get_llm_last_error():
             return None
 
@@ -2073,8 +2296,8 @@ def render_json_tab_filtered_suggestions(results: dict):
                 )
 
 
-# --- Tab 8: JSON --- #
-with tabs[8]:
+# --- Tab 9: JSON --- #
+with tabs[9]:
     st.subheader("Raw Extracted JSON")
     results = state.get("results")
 
@@ -2176,3 +2399,39 @@ with tabs[8]:
         )
     else:
         st.info("Run **Process** to see extracted JSON & proposals.")
+
+# ==== QRA Step 7: staged heavy run (after UI render) ====
+if st.session_state.get("pending_full_analysis"):
+    # Sidebar hint while running
+    st.sidebar.info("⏳ Full analysis running… Detailed risk cards will appear shortly.")
+
+    _parsed = st.session_state.get("last_parsed_bundle")
+    _subm   = st.session_state.get("last_submission_bundle")
+
+    with st.spinner("Extracting and running full analysis…"):
+        state["results"] = run_extraction_pipeline(
+            parsed_bundle=_parsed,
+            submission_bundle=_subm
+        )
+
+    # Mirror results & mark done
+    st.session_state["results"] = state.get("results") or {}
+    st.session_state["pending_full_analysis"] = False
+
+    # ==== QRA Step 8: merge quick into full ====
+    try:
+        _quick = st.session_state.get("quick_risks", []) or []
+        _res   = state.get("results") or {}
+        if _quick and isinstance(_res, dict):
+            _ri = _res.get("risk_items") or []
+            _res["risk_items"] = merge_quick_into_full(_ri, _quick)
+            state["results"] = _res
+            st.session_state["results"] = _res
+    except Exception as _e:
+        print("[QRA merge] skipped:", repr(_e))
+    
+    try:
+        st.rerun()
+    except Exception:
+        st.experimental_rerun()
+# ==== END QRA Step 7/8 ====
